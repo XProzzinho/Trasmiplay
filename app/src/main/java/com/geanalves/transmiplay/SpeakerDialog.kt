@@ -53,9 +53,11 @@ class SpeakerDialog(private val act: Activity, private val tv: Hub.TvConn) {
             st == null -> { body.addView(t("Perguntando pra TV…", 14f, Neon.soft)); return }
             !st.optBoolean("has", true) -> { body.addView(t("Essa TV não tem Bluetooth.", 15f)); return }
             !st.optBoolean("perm", true) -> {
-                body.addView(t("A TV precisa da sua permissão pra usar o Bluetooth.", 15f))
-                body.addView(button("Pedir permissão na TV", primary = true) { tv.bt("state") }, lp(top = 12))
-                body.addView(t("Depois aperte OK no controle da TV.", 13f, Neon.soft), lp(top = 8))
+                // só TVs com Android 12 ou mais chegam aqui
+                body.addView(t("Essa TV (Android 12 ou mais novo) só deixa ver as caixas com permissão.", 15f))
+                body.addView(button("Abrir permissões do Simulplay na TV", primary = true) { tv.bt("appsettings") }, lp(top = 12))
+                body.addView(t("Na TV: Permissões → Dispositivos por perto → Permitir. Depois volte aqui.", 13f, Neon.soft), lp(top = 8))
+                body.addView(button("Ou parear pela tela de Bluetooth da TV") { tv.bt("settings") }, lp(top = 12))
                 return
             }
         }
@@ -113,15 +115,23 @@ class SpeakerDialog(private val act: Activity, private val tv: Hub.TvConn) {
             val a = o.optString("addr")
             body.addView(deviceRow(o.optString("name"), if (a == pending) "esperando" else "parear") { tv.bt("connect", a) }, lp(bottom = 6))
         }
-        if (found.length() == 0 && !scanning) body.addView(t("Toque em Procurar com a caixa ligada e piscando (modo de pareamento).", 13f, Neon.soft), lp(bottom = 4))
-        body.addView(button(if (scanning) "Procurando…" else "Procurar caixas", primary = !scanning) {
+        if (found.length() == 0 && !scanning) body.addView(t("Toque em Procurar com a caixa ligada e piscando (modo de pareamento). Echo Dot: fale \"Alexa, emparelhar\".", 13f, Neon.soft), lp(bottom = 4))
+        val row = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(button(if (scanning) "Procurando…" else "Procurar caixas", primary = !scanning) {
             if (!scanning) tv.bt("scan")
-        }, lp(top = 8))
+        }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        row.addView(button("Parear pela TV") { tv.bt("settings") },
+            LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginStart = d(8) })
+        body.addView(row, lp(top = 8))
+        if (!st.optBoolean("scanPerm", true)) {
+            body.addView(t("Se a busca não achar nada, a TV não deixou o app procurar. Use \"Parear pela TV\": escolha a caixa com o controle e ela aparece aqui em cima, pronta pra conectar.", 12f, Neon.soft), lp(top = 8))
+            body.addView(t("Dar permissão pra procurar", 13f, Neon.purple, true).apply {
+                setPadding(0, d(8), 0, 0); setOnClickListener { tv.bt("ask") }
+            })
+        }
 
         body.addView(t("Se a TV não deixar o app conectar sozinho, ela abre a tela de Bluetooth: aí é só escolher a caixa com o controle.", 12f, Neon.soft), lp(top = 14))
-        body.addView(t("Abrir o Bluetooth na TV", 13f, Neon.purple, true).apply {
-            setPadding(0, d(10), 0, d(4)); setOnClickListener { tv.bt("settings") }
-        })
+
     }
 
     private fun deviceRow(name: String, state: String, onTap: () -> Unit): View {
