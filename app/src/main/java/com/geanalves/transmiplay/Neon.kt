@@ -13,25 +13,28 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 
-/** Cores e peças do visual roxo neon. */
+/** Cores do tema "Gelo azul": branco gelado, azul e o verde-água do logo. */
 object Neon {
-    // mesmo degradê da tela da TV
-    val bgTop = Color.parseColor("#1C1166")
-    val bgMid = Color.parseColor("#07061C")
-    val bgBottom = Color.parseColor("#2A0F6B")
-    // cartões de "vidro": branco bem transparente, quase sem borda
-    val card = Color.argb(22, 255, 255, 255)
-    val cardHi = Color.argb(40, 255, 255, 255)
-    val stroke = Color.argb(30, 255, 255, 255)
-    val purple = Color.parseColor("#7C3AED")
-    val purple2 = Color.parseColor("#9D5CFF")
-    val lilac = Color.parseColor("#B79CFF")
-    val blue = Color.parseColor("#3B82F6")
-    val green = Color.parseColor("#22C55E")
-    val greenDark = Color.parseColor("#0F3D26")
-    val red = Color.parseColor("#EF4444")
-    val soft = Color.parseColor("#A9A5D6")
-    val white = Color.WHITE
+    // fundo: branco gelado em degradê
+    val bgTop = Color.parseColor("#F7FAFE")
+    val bgMid = Color.parseColor("#F1F6FD")
+    val bgBottom = Color.parseColor("#E6EFFB")
+    // cartões brancos com borda bem clarinha
+    val card = Color.WHITE
+    val cardHi = Color.parseColor("#EFF6FF")
+    val stroke = Color.parseColor("#DCE6F5")
+    // os nomes antigos continuam, agora com as cores novas
+    val purple = Color.parseColor("#2563EB")     // azul principal
+    val purple2 = Color.parseColor("#3B82F6")    // azul claro
+    val lilac = Color.parseColor("#2563EB")      // textos de destaque
+    val blue = Color.parseColor("#06B6D4")       // verde-água
+    val green = Color.parseColor("#16A34A")
+    val greenDark = Color.parseColor("#ECFDF3")
+    val red = Color.parseColor("#DC2626")
+    val soft = Color.parseColor("#64748B")       // texto secundário
+    val white = Color.parseColor("#0F172A")      // texto principal (escuro)
+    val onAccent = Color.WHITE                   // texto em cima do azul
+    val track = Color.parseColor("#DBEAFE")
 
     fun dp(ctx: Context, v: Int) = (v * ctx.resources.displayMetrics.density).toInt()
 
@@ -77,8 +80,8 @@ object Neon {
             setPadding(dp(ctx, 18), dp(ctx, 14), dp(ctx, 18), dp(ctx, 14))
             isClickable = true; isFocusable = true
             setOnClickListener { onClick() }
-            if (iconRes != null) addView(icon(ctx, iconRes, white, 0), LinearLayout.LayoutParams(dp(ctx, 22), dp(ctx, 22)))
-            addView(text(ctx, label, 17f, white, true).apply { setPadding(dp(ctx, 10), 0, 0, 0) })
+            if (iconRes != null) addView(icon(ctx, iconRes, onAccent, 0), LinearLayout.LayoutParams(dp(ctx, 22), dp(ctx, 22)))
+            addView(text(ctx, label, 17f, onAccent, true).apply { setPadding(dp(ctx, 10), 0, 0, 0) })
         }
 
     /** "Transmi" branco + "play" roxo */
@@ -96,7 +99,7 @@ object Neon {
         init { setOnClickListener { on = !on; onChange(on) }; isFocusable = true }
         override fun onDraw(c: Canvas) {
             val h = height.toFloat(); val w = width.toFloat()
-            p.color = if (on) purple else Color.parseColor("#3B3766")
+            p.color = if (on) purple else Color.parseColor("#CBD5E1")
             c.drawRoundRect(RectF(0f, 0f, w, h), h / 2, h / 2, p)
             p.color = Color.WHITE
             val r = h / 2 - h * 0.12f

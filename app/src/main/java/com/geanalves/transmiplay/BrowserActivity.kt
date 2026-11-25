@@ -69,14 +69,15 @@ fun looksLikeAdUrl(url: String): Boolean {
 class BrowserActivity : Activity() {
 
     // ------------------------------------------------------------------ cores
-    private val bg = Color.parseColor("#0B0826")
-    private val bar = Neon.bgTop
-    private val field = Color.parseColor("#241D5E")
+    private val bg = Color.parseColor("#F7FAFE")
+    private val bar = Color.WHITE
+    private val field = Color.parseColor("#F1F5F9")
     private val line = Neon.stroke
     private val soft = Neon.soft
     private val blue = Neon.purple2
     private val green = Neon.green
     private val yellow = Color.parseColor("#F4C20D")
+    private val ink = Neon.white
 
     // ------------------------------------------------------------------ dados
     data class Video(
@@ -160,8 +161,11 @@ class BrowserActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = Neon.bgTop
-        window.navigationBarColor = bg
+        window.statusBarColor = Color.WHITE
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = window.decorView.systemUiVisibility or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
+            (if (Build.VERSION.SDK_INT >= 26) View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR else 0)
+        window.navigationBarColor = Color.WHITE
         TransmitService.start(this)
         Hub.start(applicationContext)
         setContentView(buildUi())
@@ -227,7 +231,7 @@ class BrowserActivity : Activity() {
 
     private fun circle(color: Int) = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
 
-    private fun icon(res: Int, tint: Int = Color.WHITE, pad: Int = 10, onClick: (() -> Unit)? = null) =
+    private fun icon(res: Int, tint: Int = ink, pad: Int = 10, onClick: (() -> Unit)? = null) =
         ImageView(this).apply {
             setImageResource(res)
             setColorFilter(tint)
@@ -238,7 +242,7 @@ class BrowserActivity : Activity() {
             }
         }
 
-    private fun text(s: String, size: Float = 14f, color: Int = Color.WHITE, bold: Boolean = false) =
+    private fun text(s: String, size: Float = 14f, color: Int = ink, bold: Boolean = false) =
         TextView(this).apply {
             text = s; textSize = size; setTextColor(color)
             if (bold) typeface = Typeface.DEFAULT_BOLD
@@ -282,7 +286,7 @@ class BrowserActivity : Activity() {
         address = EditText(this).apply {
             hint = "Navegar"
             setHintTextColor(soft)
-            setTextColor(Color.WHITE)
+            setTextColor(ink)
             textSize = 14f
             background = null
             isSingleLine = true
@@ -327,8 +331,8 @@ class BrowserActivity : Activity() {
             setOnClickListener { showTabs() }
             setBackgroundResource(android.R.drawable.list_selector_background)
         }
-        tabsBox.addView(icon(R.drawable.ic_tabs, Color.WHITE, 11), FrameLayout.LayoutParams(dp(44), dp(46)))
-        tabsCount = text("1", 9f, Color.WHITE, true).apply { gravity = Gravity.CENTER }
+        tabsBox.addView(icon(R.drawable.ic_tabs, ink, 11), FrameLayout.LayoutParams(dp(44), dp(46)))
+        tabsCount = text("1", 9f, ink, true).apply { gravity = Gravity.CENTER }
         tabsBox.addView(tabsCount, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER).apply {
             leftMargin = dp(2); topMargin = -dp(1)
         })
@@ -378,7 +382,7 @@ class BrowserActivity : Activity() {
         mini = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.parseColor("#2A1F6E"))
+            setBackgroundColor(Color.parseColor("#EFF6FF"))
             setPadding(dp(10), dp(4), dp(4), dp(4))
             visibility = View.GONE
             setOnClickListener { startActivity(Intent(this@BrowserActivity, MainActivity::class.java).putExtra(MainActivity.EXTRA_CONTROL, true)) }
@@ -420,7 +424,7 @@ class BrowserActivity : Activity() {
             setPadding(dp(4), dp(4), dp(4), dp(8))
         }
         val tabsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
-        homeTabTop = text("Mais visitados", 13f, Color.WHITE, true).apply {
+        homeTabTop = text("Mais visitados", 13f, ink, true).apply {
             setPadding(dp(18), dp(14), dp(18), dp(12)); setOnClickListener { homeShowsFav = false; fillHome() }
         }
         homeTabFav = text("Favoritos", 13f, soft).apply {
@@ -430,7 +434,7 @@ class BrowserActivity : Activity() {
         cardBox.addView(tabsRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         homeList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         cardBox.addView(homeList)
-        cardBox.addView(text("Ver mais", 13f, Color.WHITE, true).apply {
+        cardBox.addView(text("Ver mais", 13f, Neon.purple, true).apply {
             gravity = Gravity.CENTER; setPadding(0, dp(18), 0, dp(10))
             setOnClickListener { showHistory() }
         }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
@@ -439,8 +443,8 @@ class BrowserActivity : Activity() {
     }
 
     private fun fillHome() {
-        homeTabTop.setTextColor(if (homeShowsFav) soft else Color.WHITE)
-        homeTabFav.setTextColor(if (homeShowsFav) Color.WHITE else soft)
+        homeTabTop.setTextColor(if (homeShowsFav) soft else ink)
+        homeTabFav.setTextColor(if (homeShowsFav) ink else soft)
         homeTabTop.paint.isUnderlineText = !homeShowsFav
         homeTabFav.paint.isUnderlineText = homeShowsFav
         homeTabTop.invalidate(); homeTabFav.invalidate()
@@ -544,7 +548,7 @@ class BrowserActivity : Activity() {
 
     private fun showTabs() {
         val names = tabs.map { (if (it == tab) "● " else "") + (if (it.isHome) "Página inicial" else it.title.ifBlank { it.pageUrl }) }
-        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
             .setTitle("Abas (${tabs.size})")
             .setItems(names.toTypedArray()) { _, i -> switchTo(tabs[i]) }
             .setPositiveButton("Nova aba") { _, _ -> newTab(null) }
@@ -968,7 +972,7 @@ class BrowserActivity : Activity() {
         forwardBox = CheckBox(this).apply {
             isChecked = WebStore.getFlag(this@BrowserActivity, "forward", false)
             setOnCheckedChangeListener { _, c -> WebStore.setFlag(this@BrowserActivity, "forward", c) }
-            buttonTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            buttonTintList = android.content.res.ColorStateList.valueOf(Neon.purple)
         }
         fwd.addView(forwardBox)
         fwd.setOnClickListener { forwardBox?.toggle() }
@@ -1012,7 +1016,7 @@ class BrowserActivity : Activity() {
         }
         val img = ImageView(this).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
-            setBackgroundColor(Color.parseColor("#2A2A2A"))
+            setBackgroundColor(Color.parseColor("#E2E8F0"))
         }
         row.addView(img, LinearLayout.LayoutParams(dp(112), dp(72)))
         loadThumb(v.thumb, v.pageUrl, img)
@@ -1029,7 +1033,7 @@ class BrowserActivity : Activity() {
         }
         col.addView(text(
             if (v.adLike) "Propaganda (provável) · $typeLabel$durLabel" else "$typeLabel$durLabel",
-            11f, if (v.adLike) Color.parseColor("#FF8A80") else green,
+            11f, if (v.adLike) Color.parseColor("#DC2626") else green,
         ))
         if (v.adLike) row.alpha = 0.55f
         row.addView(col, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
@@ -1131,7 +1135,7 @@ class BrowserActivity : Activity() {
         }
         miniPlay.setImageResource(if (Hub.playing) R.drawable.ic_pause else R.drawable.ic_play)
         miniPlay.visibility = if (cur != null) View.VISIBLE else View.GONE
-        castIcon.setColorFilter(if (Hub.tvs.isNotEmpty()) blue else Color.WHITE)
+        castIcon.setColorFilter(if (Hub.tvs.isNotEmpty()) blue else ink)
         if (devicesBox != null) fillDevices()
         if (Hub.lastError != null) {
             toast(Hub.lastError!!)
@@ -1151,7 +1155,7 @@ class BrowserActivity : Activity() {
             setPadding(dp(20), dp(18), dp(20), dp(14))
         }
         head.addView(text("Selecione o dispositivo para transmitir para", 18f))
-        head.addView(text("Procurando por:", 13f, Color.parseColor("#DDDDDD")).apply { setPadding(0, dp(12), 0, 0) })
+        head.addView(text("Procurando por:", 13f, soft).apply { setPadding(0, dp(12), 0, 0) })
         head.addView(text("Simulplay (Android TV, Google TV, Fire TV)", 12f, soft))
         c.addView(head)
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(6), 0, dp(6)) }
@@ -1182,7 +1186,7 @@ class BrowserActivity : Activity() {
                     "github.com/XProzzinho/Simuplay/releases/latest/download/Simulplay.apk",
             )
         })
-        val d = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        val d = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
             .setView(ScrollView(this).apply { addView(c) })
             .setPositiveButton("Fechar", null)
             .setOnDismissListener { devicesBox = null }
@@ -1213,7 +1217,7 @@ class BrowserActivity : Activity() {
             row.addView(col, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
             val cb = CheckBox(this).apply {
                 isChecked = tv.enabled
-                buttonTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+                buttonTintList = android.content.res.ColorStateList.valueOf(Neon.purple)
                 setOnCheckedChangeListener { _, on -> tv.setOn(on) }
             }
             row.addView(cb)
@@ -1228,7 +1232,7 @@ class BrowserActivity : Activity() {
         val labels = mutableListOf("Remover legendas", "Arquivo local (.srt / .vtt)", "Legendas a partir de URL")
         val found = tab.subs.values.toList()
         found.forEach { labels += "Da página: " + (Uri.parse(it.url).lastPathSegment ?: it.url) }
-        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
             .setTitle("Legendas")
             .setItems(labels.toTypedArray()) { _, i ->
                 when (i) {
@@ -1257,7 +1261,7 @@ class BrowserActivity : Activity() {
             hint = "https://.../legenda.srt"
             inputType = InputType.TYPE_TEXT_VARIATION_URI
         }
-        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
             .setTitle("Legenda a partir de URL")
             .setView(FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(input) })
             .setPositiveButton("Usar") { _, _ ->
@@ -1341,7 +1345,7 @@ class BrowserActivity : Activity() {
                 setOnClickListener { dlg.dismiss(); open(s.url) }
             })
         }
-        dlg = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        dlg = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
             .setTitle("Histórico do navegador")
             .setView(ScrollView(this).apply { addView(c) })
             .setPositiveButton("Fechar", null)
@@ -1360,7 +1364,7 @@ class BrowserActivity : Activity() {
                 setOnClickListener { dlg.dismiss(); open(s.url) }
             })
         }
-        dlg = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        dlg = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
             .setTitle("Favoritos")
             .setView(ScrollView(this).apply { addView(c) })
             .setPositiveButton("Fechar", null)
@@ -1378,7 +1382,7 @@ class BrowserActivity : Activity() {
         }
         drawerPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#120E3A"))
+            setBackgroundColor(Color.WHITE)
             isClickable = true
             setPadding(0, dp(18), 0, dp(12))
         }
@@ -1396,7 +1400,7 @@ class BrowserActivity : Activity() {
             setPadding(dp(14), dp(4), dp(14), dp(4))
             setOnClickListener { closeDrawer(); if (tab.isHome) fillHome() }
         }
-        nav.addView(icon(R.drawable.ic_globe, Color.WHITE, 8), LinearLayout.LayoutParams(dp(40), dp(40)))
+        nav.addView(icon(R.drawable.ic_globe, Neon.purple, 8), LinearLayout.LayoutParams(dp(40), dp(40)))
         nav.addView(text("Navegador", 14f).apply { setPadding(dp(14), 0, 0, 0) })
         drawerPanel.addView(nav, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
             marginStart = dp(8); marginEnd = dp(8)
@@ -1410,11 +1414,11 @@ class BrowserActivity : Activity() {
                 setBackgroundResource(android.R.drawable.list_selector_background)
                 setOnClickListener { closeDrawer(); f() }
             }
-            r.addView(icon(ic, Color.WHITE, 9), LinearLayout.LayoutParams(dp(42), dp(42)))
+            r.addView(icon(ic, ink, 9), LinearLayout.LayoutParams(dp(42), dp(42)))
             r.addView(text(label, 14f).apply { setPadding(dp(16), 0, 0, 0) })
             drawerPanel.addView(r, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         }
-        fun divider() = drawerPanel.addView(View(this).apply { setBackgroundColor(Color.parseColor("#333333")) },
+        fun divider() = drawerPanel.addView(View(this).apply { setBackgroundColor(Neon.stroke) },
             LinearLayout.LayoutParams(MATCH_PARENT, dp(1)).apply { topMargin = dp(8); bottomMargin = dp(8); marginStart = dp(16); marginEnd = dp(16) })
 
         entry(R.drawable.ic_star, "Favoritos", true) { showFavorites() }
@@ -1428,7 +1432,7 @@ class BrowserActivity : Activity() {
         entry(R.drawable.ic_tv, "TVs e ajuste de atraso") { openMain(-1) }
         entry(R.drawable.ic_settings, "Configurações") { showSettings() }
 
-        val scroll = ScrollView(this).apply { addView(drawerPanel); setBackgroundColor(Color.parseColor("#120E3A")) }
+        val scroll = ScrollView(this).apply { addView(drawerPanel); setBackgroundColor(Color.WHITE) }
         d.addView(scroll, FrameLayout.LayoutParams((resources.displayMetrics.widthPixels * 0.8f).toInt(), MATCH_PARENT))
         return d
     }
@@ -1457,7 +1461,7 @@ class BrowserActivity : Activity() {
         val keys = arrayOf("block_popups", "block_ads", "always_restore")
         val defs = booleanArrayOf(true, true, false)
         val checked = BooleanArray(3) { WebStore.getFlag(this, keys[it], defs[it]) }
-        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
             .setTitle("Configurações")
             .setMultiChoiceItems(items, checked) { _, i, v -> WebStore.setFlag(this, keys[i], v) }
             .setNeutralButton("Limpar dados dos sites") { _, _ ->
@@ -1472,7 +1476,7 @@ class BrowserActivity : Activity() {
     // ================================================================== utilidades
 
     private fun info(title: String, msg: String) {
-        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
             .setTitle(title).setMessage(msg).setPositiveButton("OK", null).show()
     }
 

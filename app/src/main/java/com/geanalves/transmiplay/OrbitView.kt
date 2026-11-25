@@ -78,13 +78,13 @@ class OrbitView(ctx: Context) : View(ctx) {
         if (playing) {
             val ph = (t % 1.6f) / 1.6f
             p.style = Paint.Style.STROKE; p.strokeWidth = 2 * dp; p.shader = null
-            p.color = Color.argb((150 * (1 - ph)).toInt(), 183, 156, 255)
+            p.color = Color.argb((150 * (1 - ph)).toInt(), 37, 99, 235)
             c.drawCircle(cx, cy, ringR * (1 + 0.32f * ph), p)
         }
 
         // órbita pontilhada
         p.style = Paint.Style.STROKE; p.strokeWidth = 1 * dp
-        p.color = Color.argb(70, 183, 156, 255)
+        p.color = Color.parseColor("#BFDBFE")
         p.pathEffect = DashPathEffect(floatArrayOf(3 * dp, 7 * dp), 0f)
         c.drawCircle(cx, cy, orbitR, p)
         p.pathEffect = null
@@ -92,33 +92,37 @@ class OrbitView(ctx: Context) : View(ctx) {
         // anel de progresso
         val box = RectF(cx - ringR, cy - ringR, cx + ringR, cy + ringR)
         p.strokeWidth = 10 * dp; p.strokeCap = Paint.Cap.ROUND
-        p.color = Color.argb(60, 255, 255, 255)
+        p.color = Neon.track
         c.drawCircle(cx, cy, ringR, p)
         if (seekable && prog > 0f) {
-            p.shader = SweepGradient(cx, cy, intArrayOf(Neon.purple2, Color.parseColor("#E879F9"), Neon.lilac, Neon.purple2), null)
+            p.shader = SweepGradient(cx, cy, intArrayOf(Color.parseColor("#06B6D4"), Neon.purple, Neon.purple2, Color.parseColor("#06B6D4")), null)
             c.save(); c.rotate(-90f, cx, cy)
             c.drawArc(box, 0f, 360f * prog, false, p)
             c.restore()
             p.shader = null
             // bolinha pra arrastar
             val a = Math.toRadians((360.0 * prog) - 90)
+            val kx = cx + ringR * cos(a).toFloat(); val ky = cy + ringR * sin(a).toFloat()
             p.style = Paint.Style.FILL; p.color = Color.WHITE
-            c.drawCircle(cx + ringR * cos(a).toFloat(), cy + ringR * sin(a).toFloat(), (if (dragging) 11 else 7) * dp, p)
+            c.drawCircle(kx, ky, (if (dragging) 11 else 7) * dp, p)
+            p.style = Paint.Style.STROKE; p.strokeWidth = 3 * dp; p.color = Neon.purple
+            c.drawCircle(kx, ky, (if (dragging) 11 else 7) * dp, p)
+            p.strokeWidth = 10 * dp
         }
 
         // centro
         p.style = Paint.Style.FILL
-        p.color = Color.argb(255, 29, 24, 80)
+        p.color = Color.parseColor("#F8FAFC")
         c.drawCircle(cx, cy, centerR, p)
-        p.style = Paint.Style.STROKE; p.strokeWidth = 1 * dp; p.color = Color.argb(40, 255, 255, 255)
+        p.style = Paint.Style.STROKE; p.strokeWidth = 1 * dp; p.color = Neon.stroke
         c.drawCircle(cx, cy, centerR, p)
         val iconSize = centerR * 0.55f
         val iy = cy - centerR * 0.14f
-        p.style = Paint.Style.FILL; p.color = Color.WHITE
+        p.style = Paint.Style.FILL; p.color = Neon.purple
         when {
             speaker -> {
                 val r = (iconSize / 2).toInt()
-                speakerIcon.setTint(Color.WHITE)
+                speakerIcon.setTint(Neon.purple)
                 speakerIcon.setBounds((cx - r).toInt(), (iy - r).toInt(), (cx + r).toInt(), (iy + r).toInt())
                 speakerIcon.draw(c)
             }
@@ -135,7 +139,7 @@ class OrbitView(ctx: Context) : View(ctx) {
                 c.drawPath(path, p)
             }
         }
-        txt.textSize = 17 * sp; txt.color = Color.WHITE
+        txt.textSize = 17 * sp; txt.color = Neon.white
         c.drawText(timeText, cx, cy + centerR * 0.52f, txt)
 
         // TVs em volta
@@ -151,25 +155,24 @@ class OrbitView(ctx: Context) : View(ctx) {
             badgeRects += r
             val glow = if (tv.on && playing) 0.5f + 0.5f * sin(t * 2.2f + i).toFloat() else 0f
             if (glow > 0f) {
-                p.style = Paint.Style.FILL; p.color = Color.argb((70 * glow).toInt(), 167, 139, 250)
+                p.style = Paint.Style.FILL; p.color = Color.argb((55 * glow).toInt(), 37, 99, 235)
                 val g = 6 * dp * glow
                 c.drawRoundRect(RectF(r.left - g, r.top - g, r.right + g, r.bottom + g), 18 * dp, 18 * dp, p)
             }
             p.style = Paint.Style.FILL
-            p.color = if (tv.on) Color.parseColor("#2E2280") else Color.argb(40, 255, 255, 255)
+            p.color = if (tv.on) Color.WHITE else Color.parseColor("#F1F5F9")
             c.drawRoundRect(r, 14 * dp, 14 * dp, p)
             p.style = Paint.Style.STROKE; p.strokeWidth = 1.5f * dp
-            p.color = if (tv.on) Neon.purple2 else Color.argb(50, 255, 255, 255)
+            p.color = if (tv.on) Neon.purple else Neon.stroke
             c.drawRoundRect(r, 14 * dp, 14 * dp, p)
-            val a = if (tv.on) 255 else 130
-            tvIcon.setTint(Color.argb(a, 255, 255, 255))
+            tvIcon.setTint(if (tv.on) Neon.purple else Color.parseColor("#94A3B8"))
             val isz = (22 * dp).toInt()
             tvIcon.setBounds((x - isz / 2).toInt(), (r.top + 8 * dp).toInt(), (x + isz / 2).toInt(), (r.top + 8 * dp).toInt() + isz)
             tvIcon.draw(c)
-            txt.textSize = 11 * sp; txt.color = Color.argb(a, 255, 255, 255)
+            txt.textSize = 11 * sp; txt.color = if (tv.on) Neon.white else Color.parseColor("#94A3B8")
             c.drawText(ellipsize(tv.name, bw - 10 * dp), x, r.bottom - 10 * dp, txt)
             p.style = Paint.Style.FILL
-            p.color = if (tv.on) Neon.green else Color.parseColor("#6B6799")
+            p.color = if (tv.on) Color.parseColor("#06B6D4") else Color.parseColor("#CBD5E1")
             c.drawCircle(r.right - 9 * dp, r.top + 9 * dp, 4 * dp, p)
         }
         if (n == 0) {

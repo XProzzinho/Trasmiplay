@@ -92,7 +92,11 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = Neon.bgTop
-        window.navigationBarColor = Color.parseColor("#0B0826")
+        window.navigationBarColor = Color.WHITE
+        // ícones da barra de cima e de baixo escuros (fundo claro)
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = window.decorView.systemUiVisibility or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
+            (if (Build.VERSION.SDK_INT >= 26) View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR else 0)
         TransmitService.start(this)
         Hub.start(applicationContext)
         source = getPreferences(MODE_PRIVATE).getInt("source", -1)
@@ -217,7 +221,7 @@ class MainActivity : Activity() {
         updateBar.addView(Neon.icon(this, R.drawable.ic_update, Neon.lilac, 4), LinearLayout.LayoutParams(d(28), d(28)))
         updateText = t("", 13f).apply { setPadding(d(8), 0, d(8), 0) }
         updateBar.addView(updateText, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        updateBtn = t("Atualizar", 14f, Neon.white, true).apply {
+        updateBtn = t("Atualizar", 14f, Neon.onAccent, true).apply {
             background = Neon.buttonBg(this@MainActivity, 18)
             setPadding(d(16), d(8), d(16), d(8))
             setOnClickListener { onUpdateClick() }
@@ -236,7 +240,9 @@ class MainActivity : Activity() {
         // ---- barra de baixo
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(Color.parseColor("#0B0826"))
+            background = android.graphics.drawable.LayerDrawable(arrayOf(
+                android.graphics.drawable.ColorDrawable(Neon.stroke), android.graphics.drawable.ColorDrawable(Color.WHITE),
+            )).apply { setLayerInset(1, 0, d(1), 0, 0) }
             setPadding(0, d(8), 0, d(10))
         }
         val navDefs = listOf(
@@ -307,13 +313,13 @@ class MainActivity : Activity() {
             setPadding(d(10), d(8), d(18), d(8))
         }
         val check = ImageView(this).apply {
-            setImageResource(R.drawable.ic_check); setColorFilter(Neon.white)
+            setImageResource(R.drawable.ic_check); setColorFilter(Neon.onAccent)
             background = Neon.circle(Neon.green); setPadding(d(6), d(6), d(6), d(6))
         }
         wifiPill.addView(check, LinearLayout.LayoutParams(d(34), d(34)))
         val wcol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(d(12), 0, 0, 0) }
-        wifiTitle = t("Rede Wi-Fi conectada", 15f, Color.parseColor("#B9F8CF"), true)
-        wifiSub = t("", 12f, Color.parseColor("#86EFAC"))
+        wifiTitle = t("Rede Wi-Fi conectada", 15f, Color.parseColor("#047857"), true)
+        wifiSub = t("", 12f, Color.parseColor("#15803D"))
         wcol.addView(wifiTitle); wcol.addView(wifiSub)
         wifiPill.addView(wcol)
         c.addView(FrameLayout(this).apply {
@@ -363,7 +369,7 @@ class MainActivity : Activity() {
             setHintTextColor(Neon.soft); setTextColor(Neon.white)
             inputType = InputType.TYPE_TEXT_VARIATION_URI
             isSingleLine = true
-            background = Neon.cardBg(this@MainActivity, Color.parseColor("#100D33"), 12)
+            background = Neon.cardBg(this@MainActivity, Color.parseColor("#F8FAFC"), 12)
             setPadding(d(12), d(12), d(12), d(12))
         }
         linkPanel.addView(linkInput, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = d(10); bottomMargin = d(10) })
@@ -509,7 +515,7 @@ class MainActivity : Activity() {
         thumb = ImageView(this).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
             setImageResource(R.drawable.logo)
-            background = Neon.cardBg(this@MainActivity, Color.parseColor("#1D1850"), 12, 0, 0)
+            background = Neon.cardBg(this@MainActivity, Neon.cardHi, 12, 0, 0)
             clipToOutline = true
         }
         nowCard.addView(thumb, LinearLayout.LayoutParams(d(64), d(64)))
@@ -523,8 +529,8 @@ class MainActivity : Activity() {
 
         seek = SeekBar(this).apply {
             progressTintList = android.content.res.ColorStateList.valueOf(Neon.lilac)
-            thumbTintList = android.content.res.ColorStateList.valueOf(Neon.white)
-            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Color.argb(70, 255, 255, 255))
+            thumbTintList = android.content.res.ColorStateList.valueOf(Neon.purple)
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Neon.track)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
                     if (fromUser) timeText.text = "${fmt(p * 1000L)} / ${fmt(Hub.current?.durMs ?: 0)}"
@@ -546,7 +552,7 @@ class MainActivity : Activity() {
             }
             val iv = ImageView(this).apply {
                 setImageResource(ic); setColorFilter(Neon.white)
-                background = Neon.circle(Neon.card)
+                background = Neon.circle(Neon.card, Neon.stroke, d(1))
                 setPadding(d(14), d(14), d(14), d(14))
             }
             b.addView(iv, LinearLayout.LayoutParams(d(52), d(52)))
@@ -562,9 +568,9 @@ class MainActivity : Activity() {
         ctl(R.drawable.ic_stop, "Parar") { Hub.stopAll(); CaptureService.stop(this) }
         ctrlActive.addView(btns, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
-        syncCard = t("", 13f, Color.parseColor("#B9F8CF"), true).apply {
+        syncCard = t("", 13f, Color.parseColor("#0E7490"), true).apply {
             gravity = Gravity.CENTER
-            background = Neon.cardBg(this@MainActivity, Color.argb(60, 34, 197, 94), 20, 0, 0)
+            background = Neon.cardBg(this@MainActivity, Color.parseColor("#ECFEFF"), 20, 0, 0)
             setPadding(d(16), d(9), d(16), d(9))
         }
         ctrlActive.addView(FrameLayout(this).apply {
@@ -689,12 +695,12 @@ class MainActivity : Activity() {
         if (!::tvList.isInitialized) return
         // Wi-Fi
         val (ok, sub) = wifiStatus()
-        wifiPill.background = Neon.cardBg(this, if (ok) Neon.greenDark else Color.parseColor("#3D1414"), 30,
-            if (ok) Neon.green else Neon.red, 2)
+        wifiPill.background = Neon.cardBg(this, if (ok) Neon.greenDark else Color.parseColor("#FEF2F2"), 30,
+            if (ok) Color.parseColor("#A7F3D0") else Color.parseColor("#FECACA"), 1)
         wifiTitle.text = if (ok) "Rede Wi-Fi conectada" else "Sem Wi-Fi"
-        wifiTitle.setTextColor(if (ok) Color.parseColor("#B9F8CF") else Color.parseColor("#FECACA"))
+        wifiTitle.setTextColor(if (ok) Color.parseColor("#047857") else Color.parseColor("#B91C1C"))
         wifiSub.text = sub
-        wifiSub.setTextColor(if (ok) Color.parseColor("#86EFAC") else Color.parseColor("#FCA5A5"))
+        wifiSub.setTextColor(if (ok) Color.parseColor("#15803D") else Color.parseColor("#DC2626"))
         (wifiPill.getChildAt(0) as ImageView).apply {
             setImageResource(if (ok) R.drawable.ic_check else R.drawable.ic_close)
             background = Neon.circle(if (ok) Neon.green else Neon.red)
@@ -725,11 +731,11 @@ class MainActivity : Activity() {
             val isCur = i == Hub.currentIndex && Hub.current != null
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-                background = Neon.cardBg(this@MainActivity, if (isCur) Color.parseColor("#3A2A8A") else Neon.card, 12, Neon.stroke, if (isCur) 0 else 1)
+                background = Neon.cardBg(this@MainActivity, if (isCur) Neon.cardHi else Neon.card, 12, if (isCur) Neon.purple else Neon.stroke, 1)
                 setPadding(d(12), d(8), d(4), d(8))
                 setOnClickListener { Hub.playTrack(i); selectTab(2) }
             }
-            row.addView(Neon.icon(this, if (isCur) R.drawable.ic_play else R.drawable.ic_music, if (isCur) Neon.white else Neon.lilac, 4),
+            row.addView(Neon.icon(this, if (isCur) R.drawable.ic_play else R.drawable.ic_music, Neon.lilac, 4),
                 LinearLayout.LayoutParams(d(28), d(28)))
             row.addView(t(tr.title, 14f).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(d(10), 0, 0, 0) },
                 LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
@@ -791,9 +797,9 @@ class MainActivity : Activity() {
         }
         val screen = FrameLayout(this).apply {
             background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.parseColor("#4C6FFF"), Color.parseColor("#1E1B4B"))).apply { cornerRadius = d(6).toFloat() }
+                intArrayOf(Color.parseColor("#06B6D4"), Color.parseColor("#2563EB"))).apply { cornerRadius = d(8).toFloat() }
         }
-        screen.addView(Neon.icon(this, R.drawable.ic_tv, Color.parseColor("#DDE4FF"), 8), FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        screen.addView(Neon.icon(this, R.drawable.ic_tv, Color.WHITE, 8), FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         r.addView(screen, LinearLayout.LayoutParams(d(64), d(42)))
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(d(14), 0, 0, 0) }
         col.addView(t(tv.name, 16f, Neon.white, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
@@ -802,7 +808,7 @@ class MainActivity : Activity() {
             setSpan(android.text.style.ForegroundColorSpan(if (tv.enabled) Neon.green else Neon.soft), 0, 1, 0)
             append(if (tv.enabled) "Conectada$adj" else "Fora desta transmissão")
         }
-        col.addView(t(st, 12f, if (tv.enabled) Color.parseColor("#86EFAC") else Neon.soft))
+        col.addView(t(st, 12f, if (tv.enabled) Color.parseColor("#0E7490") else Neon.soft))
         r.addView(col, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         r.addView(Neon.Check(this, tv.enabled) { tv.setOn(it) }, LinearLayout.LayoutParams(d(30), d(30)))
         r.setOnClickListener { adjustDialog(tv) }
@@ -871,7 +877,7 @@ class MainActivity : Activity() {
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
 
     private fun info(title: String, msg: String) {
-        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
             .setTitle(title).setMessage(msg).setPositiveButton("OK", null).show()
     }
 
@@ -891,7 +897,7 @@ class MainActivity : Activity() {
             row.addView(smallButton("+") { tv.changeAdj(20); v.text = "${tv.adj} ms" }, LinearLayout.LayoutParams(d(48), WRAP_CONTENT))
             c.addView(row)
         }
-        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
             .setTitle("Ajustar atraso").setView(c).setPositiveButton("Pronto", null).show()
     }
 
@@ -926,12 +932,12 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.parseColor("#1B1060"), Color.parseColor("#07061C"), Color.parseColor("#2A0F6B")))
+                intArrayOf(Color.WHITE, Neon.bgMid, Neon.bgBottom))
             isClickable = true
         }
         s.addView(ImageView(this).apply { setImageResource(R.drawable.logo) }, LinearLayout.LayoutParams(d(170), d(170)))
         s.addView(Neon.brand(this, "Transmi", "play", 42f).apply { gravity = Gravity.CENTER; setPadding(0, d(22), 0, d(6)) }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        s.addView(t("Transmita para várias TVs\nao mesmo tempo", 18f, Color.parseColor("#D6D3F5")).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        s.addView(t("Transmita para várias TVs\nao mesmo tempo", 18f, Neon.soft).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         val tag = android.text.SpannableStringBuilder("Conecte • ").apply {
             val a = length; append("Transmita • Aproveite")
             setSpan(android.text.style.ForegroundColorSpan(Neon.lilac), a, length, 0)
