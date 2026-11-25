@@ -235,7 +235,7 @@ object Hub {
                         }
                         "info" -> onInfo(j.optInt("id"), j.optLong("dur"))
                         "ended" -> onEnded(j.optInt("id"))
-                        "error" -> { lastError = "$name: ${j.optString("msg")}"; notifyUi() }
+                        "error" -> onTvError(this, j)
                     }
                 }
             } catch (_: Exception) {}
@@ -395,6 +395,33 @@ object Hub {
         playing = false
         sessionId++
         sendAll(JSONObject().put("t", "stop"))
+        notifyUi()
+    }
+
+    /** a TV não conseguiu abrir: tenta sozinho passando o vídeo pelo celular */
+    private fun onTvError(tv: TvConn, j: JSONObject) = runOnWorker {
+        val cur = current
+        val id = j.optInt("id", -1)
+        val http = j.optInt("http")
+        if (id != -1 && id != sessionId) return@runOnWorker // erro de um vídeo antigo
+        if (cur != null && cur.kind == "media" && cur.uri == null && !cur.proxy) {
+            lastError = "A TV não abriu direto. Tentando passar o vídeo pelo celular…"
+            notifyUi()
+            val pos = position()
+            load(cur.copy(proxy = true), currentIndex)
+            if (pos > 3000) worker.postDelayed({ seek(pos) }, 200)
+            return@runOnWorker
+        }
+        val why = when {
+            http == 403 || http == 401 -> "o site não deixou outro aparelho abrir o vídeo (erro $http)"
+            http == 404 || http == 410 -> "o link do vídeo expirou (erro $http). Dê play de novo no site e mande outra vez"
+            http >= 500 -> "o servidor do vídeo está com problema (erro $http)"
+            j.optString("name").contains("PARSING") || j.optString("name").contains("DECODING") ->
+                "o formato desse vídeo não é suportado pela TV"
+            j.optString("name").contains("DRM") -> "o vídeo tem proteção (DRM)"
+            else -> j.optString("msg")
+        }
+        lastError = "${tv.name}: $why"
         notifyUi()
     }
 
