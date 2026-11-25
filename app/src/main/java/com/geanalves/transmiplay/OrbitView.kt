@@ -59,8 +59,9 @@ class OrbitView(ctx: Context) : View(ctx) {
     private val cx get() = width / 2f
     private val cy get() = height / 2f
     private val s get() = min(width, height).toFloat()
-    private val ringR get() = s * 0.29f
-    private val orbitR get() = s * 0.43f
+    private val ringR get() = s * 0.25f
+    // as TVs ficam na órbita sem cortar nas bordas
+    private val orbitR get() = min(s * 0.39f, s / 2 - 34 * dp)
     private val centerR get() = ringR - 14 * dp
 
     override fun onMeasure(w: Int, h: Int) {

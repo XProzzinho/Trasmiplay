@@ -495,7 +495,7 @@ class MainActivity : Activity() {
             onTv = { i -> Hub.tvs.getOrNull(i)?.let { it.setOn(!it.enabled) } }
             onSeek = { p -> Hub.current?.durMs?.takeIf { it > 0 }?.let { Hub.seek((it * p).toLong()) } }
         }
-        ctrlActive.addView(orbit, LinearLayout.LayoutParams(MATCH_PARENT, d(350)).apply { topMargin = d(4) })
+        ctrlActive.addView(orbit, LinearLayout.LayoutParams(MATCH_PARENT, d(390)).apply { topMargin = d(8) })
         ctrlActive.addView(t("Transmitindo para", 15f, Neon.soft).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         tvCountText = t("", 32f, Neon.lilac, true).apply { gravity = Gravity.CENTER }
         ctrlActive.addView(tvCountText, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
