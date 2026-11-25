@@ -62,9 +62,12 @@ class HttpServer(private val port: Int) {
                 if (parts.size < 2) return
                 val method = parts[0]
                 val path = parts[1].substringBefore('?')
-                val idx = path.removePrefix("/m/").toIntOrNull()
-                val item = idx?.let { Hub.tracks.getOrNull(it) }
-                val uri = item?.uri
+                val query = parts[1].substringAfter('?', "")
+                if (path == "/p") { proxy(out, method, query, range); return }
+                val uri = if (path == "/sub") Hub.subUri else {
+                    val idx = path.removePrefix("/m/").toIntOrNull()
+                    idx?.let { Hub.tracks.getOrNull(it) }?.uri
+                }
                 if (uri == null) {
                     writeHead(out, "404 Not Found", "text/plain", 0, null)
                     return
@@ -110,6 +113,72 @@ class HttpServer(private val port: Int) {
                     copy(src, out, length)
                 }
             } catch (_: Exception) {}
+        }
+    }
+
+    // ------------------------------------------------------------ encaminhar pelo celular
+
+    private fun param(query: String, name: String): String? =
+        query.split('&').firstOrNull { it.startsWith("$name=") }?.substringAfter('=')
+            ?.let { java.net.URLDecoder.decode(it, "UTF-8") }
+
+    private fun proxied(u: java.net.URL) = "/p?u=" + java.net.URLEncoder.encode(u.toString(), "UTF-8")
+
+    /** reescreve uma lista m3u8 pra que cada pedaço também passe pelo celular */
+    fun rewriteM3u8(text: String, base: java.net.URL): String {
+        val uriAttr = Regex("URI=\"([^\"]+)\"")
+        return text.lineSequence().joinToString("\n") { raw ->
+            val line = raw.trim()
+            when {
+                line.isEmpty() -> line
+                line.startsWith("#") -> uriAttr.replace(line) { m ->
+                    "URI=\"" + proxied(java.net.URL(base, m.groupValues[1])) + "\""
+                }
+                else -> proxied(java.net.URL(base, line))
+            }
+        }
+    }
+
+    private fun proxy(out: OutputStream, method: String, query: String, range: String?) {
+        val target = param(query, "u")
+        if (target == null) { writeHead(out, "400 Bad Request", "text/plain", 0, null); return }
+        val headers = Hub.current?.headers ?: emptyMap()
+        var conn: java.net.HttpURLConnection? = null
+        try {
+            conn = java.net.URL(target).openConnection() as java.net.HttpURLConnection
+            conn.instanceFollowRedirects = true
+            conn.connectTimeout = 10000
+            conn.readTimeout = 20000
+            for ((k, v) in headers) conn.setRequestProperty(k, v)
+            if (range != null) conn.setRequestProperty("Range", range)
+            val code = conn.responseCode
+            val ct = conn.contentType ?: "application/octet-stream"
+            val isList = ct.contains("mpegurl", true) ||
+                target.substringBefore('?').endsWith(".m3u8", true) ||
+                target.substringBefore('?').endsWith(".m3u", true)
+            if (isList && code in 200..299) {
+                val text = conn.inputStream.bufferedReader().readText()
+                if (text.trimStart().startsWith("#EXTM3U")) {
+                    val bytes = rewriteM3u8(text, conn.url).toByteArray()
+                    writeHead(out, "200 OK", "application/vnd.apple.mpegurl", bytes.size.toLong(), null)
+                    if (method != "HEAD") { out.write(bytes); out.flush() }
+                    return
+                }
+                val bytes = text.toByteArray()
+                writeHead(out, "$code OK", ct, bytes.size.toLong(), null)
+                if (method != "HEAD") { out.write(bytes); out.flush() }
+                return
+            }
+            val len = conn.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
+            val status = if (code == 206) "206 Partial Content" else if (code in 200..299) "200 OK" else "$code Erro"
+            writeHead(out, status, ct, len, conn.getHeaderField("Content-Range"))
+            if (method == "HEAD") return
+            val src = if (code in 200..299) conn.inputStream else conn.errorStream
+            src?.use { copy(it, out, len) }
+        } catch (e: Exception) {
+            try { writeHead(out, "502 Bad Gateway", "text/plain", 0, null) } catch (_: Exception) {}
+        } finally {
+            conn?.disconnect()
         }
     }
 

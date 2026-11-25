@@ -59,6 +59,7 @@ class MainActivity : Activity() {
         TransmitService.start(this)
         Hub.start(applicationContext)
         mode = getPreferences(MODE_PRIVATE).getInt("mode", 0)
+        intent?.getIntExtra(EXTRA_MODE, -1)?.let { if (it >= 0) mode = it }
         setContentView(buildUi())
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -68,6 +69,8 @@ class MainActivity : Activity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
+        intent.getIntExtra(EXTRA_MODE, -1).let { if (it >= 0) selectMode(it) }
         handleShare(intent)
     }
 
@@ -159,7 +162,12 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(20), dp(16), dp(24))
         }
-        root.addView(text("Transmiplay", 30f, Color.WHITE, true))
+        val titleRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        titleRow.addView(text("Transmiplay", 30f, Color.WHITE, true), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        titleRow.addView(button("Navegador") {
+            startActivity(Intent(this, BrowserActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+        })
+        root.addView(titleRow)
         root.addView(text("Manda o som e o vídeo pras TVs com o Simulplay", 14f, soft))
         root.addGap(16)
 
@@ -312,7 +320,9 @@ class MainActivity : Activity() {
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(0, dp(4), 0, dp(4))
             }
-            row.addView(text("📺  ${tv.name}", 15f), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+            row.addView(text((if (tv.enabled) "📺  " else "⛔  ") + tv.name, 15f, if (tv.enabled) Color.WHITE else soft).apply {
+                setOnClickListener { tv.setOn(!tv.enabled) }
+            }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
             val small = { LinearLayout.LayoutParams(dp(44), dp(40)) }
             row.addView(button("−", Color.parseColor("#2A3450")) { tv.changeAdj(-20) }.apply { setPadding(0, 0, 0, 0) }, small())
             val label = if (tv.adj == 0) "0 ms" else (if (tv.adj > 0) "+" else "") + "${tv.adj} ms"
@@ -433,5 +443,6 @@ class MainActivity : Activity() {
         const val REQ_PICK = 1
         const val REQ_AUDIO = 2
         const val REQ_PROJECTION = 3
+        const val EXTRA_MODE = "mode"
     }
 }

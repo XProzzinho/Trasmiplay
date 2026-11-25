@@ -35,7 +35,14 @@ object Hub {
         val title: String,
         val uri: Uri? = null,      // música do celular
         @Volatile var durMs: Long = 0,
+        val headers: Map<String, String> = emptyMap(), // Referer, cookies... que o site exige
+        val mime: String? = null,  // "m3u8", "mpd", "mp4"...
+        val proxy: Boolean = false,// passa o vídeo pelo celular
+        @Volatile var sub: Sub? = null,
+        val thumb: String? = null,
     )
+
+    data class Sub(val url: String, val mime: String, val local: Boolean)
 
     lateinit var app: Context
         private set
@@ -56,6 +63,10 @@ object Hub {
     @Volatile private var endedHandled = false
     @Volatile var caixinha = false; private set
     @Volatile var lastError: String? = null
+    /** legenda escolhida antes de transmitir */
+    @Volatile var pendingSub: Sub? = null
+    /** arquivo de legenda do celular servido em /sub */
+    @Volatile var subUri: Uri? = null
 
     var listener: (() -> Unit)? = null
     fun notifyUi() = main.post { listener?.invoke() }
@@ -178,6 +189,7 @@ object Hub {
     class TvConn(private val socket: Socket) {
         @Volatile var name: String = socket.inetAddress.hostAddress ?: "TV"
         @Volatile var adj: Int = 0
+        @Volatile var enabled: Boolean = true
         private val out: OutputStream = socket.getOutputStream()
 
         fun send(j: JSONObject) {
@@ -201,9 +213,12 @@ object Hub {
                         "hello" -> {
                             name = j.optString("name", name)
                             adj = prefs().getInt("adj_$name", 0)
+                            enabled = prefs().getBoolean("on_$name", true)
                             send(JSONObject().put("t", "adj").put("ms", adj))
-                            current?.let { send(loadMsg(it)); send(stateMsg()) }
-                            if (caixinha) send(audioMsg(true))
+                            if (enabled) {
+                                current?.let { send(loadMsg(it)); send(stateMsg()) }
+                                if (caixinha) send(audioMsg(true))
+                            }
                             notifyUi()
                         }
                         "info" -> onInfo(j.optInt("id"), j.optLong("dur"))
@@ -213,6 +228,19 @@ object Hub {
                 }
             } catch (_: Exception) {}
             close()
+        }
+
+        fun setOn(on: Boolean) {
+            enabled = on
+            prefs().edit().putBoolean("on_$name", on).apply()
+            if (on) {
+                current?.let { send(loadMsg(it)); send(stateMsg()) }
+                if (caixinha) send(audioMsg(true))
+            } else {
+                send(JSONObject().put("t", "stop"))
+                send(audioMsg(false))
+            }
+            notifyUi()
         }
 
         fun changeAdj(delta: Int) {
@@ -225,12 +253,23 @@ object Hub {
 
     private fun prefs() = app.getSharedPreferences("transmiplay", Context.MODE_PRIVATE)
 
-    private fun sendAll(j: JSONObject) = tvs.forEach { it.send(j) }
+    private fun sendAll(j: JSONObject) = tvs.forEach { if (it.enabled) it.send(j) }
 
     private fun loadMsg(it: Item): JSONObject {
         val j = JSONObject().put("t", "load").put("id", sessionId).put("kind", it.kind).put("title", it.title)
-        if (it.uri != null) j.put("local", true).put("url", "/m/$currentIndex?s=$sessionId")
-        else j.put("local", false).put("url", it.url)
+        when {
+            it.uri != null -> j.put("local", true).put("url", "/m/$currentIndex?s=$sessionId")
+            it.proxy -> j.put("local", true).put("url", "/p?u=" + java.net.URLEncoder.encode(it.url, "UTF-8"))
+            else -> {
+                j.put("local", false).put("url", it.url)
+                if (it.headers.isNotEmpty()) j.put("headers", JSONObject(it.headers))
+            }
+        }
+        it.mime?.let { m -> j.put("mime", m) }
+        it.sub?.let { sb ->
+            j.put("sub", if (sb.local) "/sub?s=$sessionId-${sb.url.hashCode()}" else sb.url)
+                .put("subLocal", sb.local).put("subMime", sb.mime)
+        }
         return j
     }
 
@@ -249,6 +288,23 @@ object Hub {
         val item = if (yt != null) Item("youtube", yt, "YouTube")
         else Item("media", url, Uri.parse(url).lastPathSegment?.take(60) ?: url)
         load(item, -1)
+    }
+
+    /** vídeo achado no navegador */
+    fun playItem(item: Item) = runOnWorker {
+        if (item.kind == "media" && item.sub == null) item.sub = pendingSub
+        load(item, -1)
+    }
+
+    /** troca a legenda do que está tocando (ou guarda pra próxima vez) */
+    fun setSubtitle(sub: Sub?) = runOnWorker {
+        pendingSub = sub
+        val cur = current ?: return@runOnWorker
+        if (cur.kind != "media") return@runOnWorker
+        cur.sub = sub
+        sendAll(loadMsg(cur))
+        sendAll(stateMsg())
+        notifyUi()
     }
 
     fun playTrack(index: Int) = runOnWorker {
