@@ -43,4 +43,14 @@ class LogicTest {
         assertEquals(false, looksLikeAdUrl("https://cdn.site.com/hls/movie/master.m3u8"))
         assertEquals(false, looksLikeAdUrl("https://videos.site.com/2024/filme-1080p.mp4"))
     }
+
+    @Test fun adBlockRules() {
+        assertTrue(AdBlock.shouldBlock("https://pagead2.googlesyndication.com/pagead/show.js", "https://site.com/filme"))
+        assertTrue(AdBlock.shouldBlock("https://cdn.adsterra.com/x.js", "https://site.com/"))
+        assertTrue(AdBlock.shouldBlock("https://other-cdn.net/ads/banner.js", "https://site.com/"))
+        assertEquals(false, AdBlock.shouldBlock("https://site.com/ads/ok.js", "https://www.site.com/"))
+        assertEquals(false, AdBlock.shouldBlock("https://cdn.jsdelivr.net/npm/hls.js", "https://site.com/"))
+        assertEquals("site.com.br", AdBlock.site("player.site.com.br"))
+        java.io.File("build/adblock.js").writeText(AdBlock.SCRIPT)
+    }
 }

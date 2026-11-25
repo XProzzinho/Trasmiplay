@@ -57,7 +57,7 @@ import java.util.concurrent.Executors
 fun looksLikeAdUrl(url: String): Boolean {
     val u = url.lowercase()
     val host = try { java.net.URL(u).host } catch (_: Exception) { "" }
-    if (BrowserActivity.AD_HOSTS.any { host == it || host.endsWith(".$it") }) return true
+    if (AdBlock.isAdHost(host)) return true
     val path = u.substringAfter(host)
     return listOf(
         "/ads/", "/ad/", "/adv/", "/advert", "preroll", "pre-roll", "midroll", "/vast", "vast.xml", "vast=",
@@ -115,6 +115,7 @@ class BrowserActivity : Activity() {
         @Volatile var pageUrl = ""
         @Volatile var title = ""
         @Volatile var ogImage: String? = null
+        @Volatile var blocked = 0
         val isHome get() = pageUrl.isEmpty()
     }
 
@@ -130,6 +131,9 @@ class BrowserActivity : Activity() {
     private lateinit var address: EditText
     private lateinit var addrIcon: ImageView
     private lateinit var foundBtn: FrameLayout
+    private lateinit var shield: FrameLayout
+    private lateinit var shieldIcon: ImageView
+    private lateinit var shieldCount: TextView
     private lateinit var foundCount: TextView
     private lateinit var tabsCount: TextView
     private lateinit var castIcon: ImageView
@@ -184,6 +188,7 @@ class BrowserActivity : Activity() {
         super.onResume()
         Hub.listener = { refreshMini() }
         refreshMini()
+        updateShield()
         tabs.forEach { it.web.onResume() }
     }
 
@@ -250,7 +255,23 @@ class BrowserActivity : Activity() {
             setBackgroundColor(bar)
             setPadding(dp(2), dp(6), dp(2), dp(6))
         }
-        top.addView(icon(R.drawable.ic_menu) { openDrawer() }, LinearLayout.LayoutParams(dp(46), dp(46)))
+        top.addView(icon(R.drawable.ic_menu) { openDrawer() }, LinearLayout.LayoutParams(dp(42), dp(46)))
+
+        // escudo: ícone do app colorido = bloqueando anúncios, cinza = desligado
+        shield = FrameLayout(this).apply {
+            setOnClickListener { toggleShield() }
+            setOnLongClickListener { shieldInfo(); true }
+        }
+        shieldIcon = ImageView(this).apply { setImageResource(R.drawable.logo) }
+        shield.addView(shieldIcon, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.CENTER))
+        shieldCount = text("", 9f, Color.WHITE, true).apply {
+            background = circle(Color.parseColor("#D64545"))
+            gravity = Gravity.CENTER
+            setPadding(dp(3), 0, dp(3), 0)
+            visibility = View.GONE
+        }
+        shield.addView(shieldCount, FrameLayout.LayoutParams(WRAP_CONTENT, dp(15), Gravity.TOP or Gravity.END))
+        top.addView(shield, LinearLayout.LayoutParams(dp(40), dp(42)).apply { marginEnd = dp(4) })
 
         val fieldBox = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -500,6 +521,7 @@ class BrowserActivity : Activity() {
         tabsCount.text = tabs.size.toString()
         updateFound()
         updateAddrIcon(false)
+        updateShield()
     }
 
     private fun closeTab(t: Tab) {
@@ -604,10 +626,18 @@ class BrowserActivity : Activity() {
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(w, true)
         w.addJavascriptInterface(PageBridge(t), "TP")
+        if (androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            // roda o bloqueador antes da página, inclusive dentro dos quadros (o próprio script vê se está ligado)
+            try { androidx.webkit.WebViewCompat.addDocumentStartJavaScript(w, AdBlock.SCRIPT, setOf("*")) } catch (_: Exception) {}
+        }
 
         w.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val u = request.url.toString()
+                if (blockAds && u.startsWith("http") && AdBlock.isAdHost(request.url.host ?: "")) {
+                    countBlocked(t) // redirecionamento pra propaganda: fica na página
+                    return true
+                }
                 if (u.startsWith("http")) return false
                 // links "intent://", "market://"... normalmente são propaganda: não abre
                 return true
@@ -616,8 +646,10 @@ class BrowserActivity : Activity() {
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
                 if (url == "about:blank") return
                 if (t.pageUrl != url && sameDocChange(t.pageUrl, url).not()) {
-                    t.videos.clear(); t.subs.clear(); t.ogImage = null
+                    t.videos.clear(); t.subs.clear(); t.ogImage = null; t.blocked = 0
+                    if (t == tab) updateShield()
                 }
+                if (blockAds) view.evaluateJavascript(AdBlock.SCRIPT, null)
                 t.pageUrl = url
                 if (t == tab) {
                     if (!address.hasFocus()) address.setText(url)
@@ -632,6 +664,7 @@ class BrowserActivity : Activity() {
                 t.pageUrl = url
                 t.title = view.title ?: ""
                 WebStore.visit(this@BrowserActivity, url, t.title)
+                if (blockAds) view.evaluateJavascript(AdBlock.SCRIPT, null)
                 view.evaluateJavascript(SCAN_JS, null)
                 if (t == tab) {
                     progress.visibility = View.GONE
@@ -654,7 +687,8 @@ class BrowserActivity : Activity() {
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                 val u = request.url.toString()
                 val host = request.url.host ?: ""
-                if (blockAds && AD_HOSTS.any { host == it || host.endsWith(".$it") }) {
+                if (blockAds && !request.isForMainFrame && AdBlock.shouldBlock(u, t.pageUrl)) {
+                    countBlocked(t)
                     return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
                 }
                 sniff(t, u, request.requestHeaders)
@@ -764,6 +798,12 @@ class BrowserActivity : Activity() {
 
     inner class PageBridge(private val t: Tab) {
         @JavascriptInterface
+        fun adsOn(): Boolean = blockAds
+
+        @JavascriptInterface
+        fun blocked() = countBlocked(t)
+
+        @JavascriptInterface
         fun found(src: String, title: String, og: String, w: Int, h: Int, dur: Double) {
             if (og.isNotBlank()) t.ogImage = og
             if (!src.startsWith("http")) return
@@ -787,6 +827,53 @@ class BrowserActivity : Activity() {
                 ui.post { t.videos.values.forEach { v -> if (v.thumb == null) v.thumb = og } }
             }
         }
+    }
+
+    // ================================================================== escudo (bloqueador)
+
+    private fun countBlocked(t: Tab) {
+        t.blocked++
+        if (t == tab) ui.post { updateShield() }
+    }
+
+    private fun updateShield() {
+        if (!::shieldIcon.isInitialized) return
+        if (blockAds) {
+            shieldIcon.colorFilter = null
+            shieldIcon.alpha = 1f
+            val n = tab.blocked
+            shieldCount.text = if (n > 99) "99+" else n.toString()
+            shieldCount.visibility = if (n > 0) View.VISIBLE else View.GONE
+        } else {
+            shieldIcon.colorFilter = android.graphics.ColorMatrixColorFilter(android.graphics.ColorMatrix().apply { setSaturation(0f) })
+            shieldIcon.alpha = 0.45f
+            shieldCount.visibility = View.GONE
+        }
+    }
+
+    private fun toggleShield() {
+        val on = !blockAds
+        WebStore.setFlag(this, "block_ads", on)
+        WebStore.setFlag(this, "block_popups", on)
+        tab.blocked = 0
+        updateShield()
+        shield.animate().scaleX(1.25f).scaleY(1.25f).setDuration(120).withEndAction {
+            shield.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
+        }.start()
+        toast(if (on) "Bloqueio de anúncios LIGADO" else "Bloqueio de anúncios DESLIGADO")
+        if (!tab.isHome) tab.web.reload()
+    }
+
+    private fun shieldInfo() {
+        val on = blockAds
+        info(
+            "Escudo do Transmiplay",
+            (if (on) "Ligado: ${tab.blocked} anúncios e rastreadores bloqueados nesta página.\n\n"
+            else "Desligado: os sites mostram os anúncios normalmente.\n\n") +
+                "Toque no ícone pra ligar ou desligar. Ligado ele corta propagandas, pop-ups, redirecionamentos " +
+                "e as camadas invisíveis que abrem anúncio quando você toca no vídeo.\n\n" +
+                "Se algum site não funcionar direito, desligue o escudo e recarregue.",
+        )
     }
 
     private fun fmtDur(sec: Double): String {
