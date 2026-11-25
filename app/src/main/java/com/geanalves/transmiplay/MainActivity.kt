@@ -72,16 +72,13 @@ class MainActivity : Activity() {
     // controle
     private lateinit var ctrlEmpty: LinearLayout
     private lateinit var ctrlActive: LinearLayout
-    private lateinit var ring: Neon.Ring
-    private lateinit var ringIcon: ImageView
+    private lateinit var orbit: OrbitView
     private lateinit var tvCountText: TextView
     private lateinit var thumb: ImageView
     private lateinit var thumbBadge: TextView
     private lateinit var nowTitle: TextView
     private lateinit var seek: SeekBar
     private lateinit var timeText: TextView
-    private lateinit var pauseIcon: ImageView
-    private lateinit var pauseLabel: TextView
     private lateinit var prevBtn: View
     private lateinit var nextBtn: View
     private lateinit var syncCard: TextView
@@ -95,7 +92,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = Neon.bgTop
-        window.navigationBarColor = Neon.bgBottom
+        window.navigationBarColor = Color.parseColor("#0B0826")
         TransmitService.start(this)
         Hub.start(applicationContext)
         source = getPreferences(MODE_PRIVATE).getInt("source", -1)
@@ -239,8 +236,8 @@ class MainActivity : Activity() {
         // ---- barra de baixo
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(Color.parseColor("#0C0A26"))
-            setPadding(0, d(6), 0, d(8))
+            setBackgroundColor(Color.parseColor("#0B0826"))
+            setPadding(0, d(8), 0, d(10))
         }
         val navDefs = listOf(
             R.drawable.ic_home to "Início",
@@ -293,7 +290,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(d(2), d(18), d(2), d(10))
         }
-        r.addView(t(title, 18f, Neon.white, true), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        r.addView(t(title, 17f, Neon.white, true).apply { letterSpacing = 0.01f }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         if (action != null) r.addView(action)
         return r
     }
@@ -340,8 +337,8 @@ class MainActivity : Activity() {
                 val card = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     gravity = Gravity.CENTER
-                    background = Neon.cardBg(this@MainActivity)
-                    setPadding(d(8), d(16), d(8), d(14))
+                    background = Neon.cardBg(this@MainActivity, Neon.card, 22, 0, 0)
+                    setPadding(d(8), d(20), d(8), d(18))
                     setOnClickListener { if (key == -10) selectTab(1) else selectSource(key) }
                     tag = key
                 }
@@ -446,8 +443,8 @@ class MainActivity : Activity() {
         if (!::sourceCards.isInitialized) return
         sourceCards.forEach { card ->
             val on = card.tag == source
-            card.background = Neon.cardBg(this, if (on) Neon.cardHi else Neon.card, 16,
-                if (on) Neon.purple2 else Neon.stroke, if (on) 2 else 1)
+            card.background = Neon.cardBg(this, if (on) Neon.cardHi else Neon.card, 22,
+                if (on) Neon.purple2 else Neon.stroke, if (on) 2 else 0)
         }
         listOf(0 to linkPanel, 1 to filesPanel, 2 to boxPanel).forEach { (k2, p) ->
             p.visibility = if (k2 == source) View.VISIBLE else View.GONE
@@ -488,51 +485,46 @@ class MainActivity : Activity() {
             LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = d(24) })
         c.addView(ctrlEmpty, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
-        // ativo
+        // ativo: "TVs em órbita"
         ctrlActive = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
-        ctrlActive.addView(t("Transmissão Ativa", 22f, Neon.white, true).apply { gravity = Gravity.CENTER; setPadding(0, d(6), 0, d(14)) }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        val ringBox = FrameLayout(this)
-        ring = Neon.Ring(this)
-        ringBox.addView(ring, FrameLayout.LayoutParams(d(170), d(170)))
-        ringIcon = ImageView(this).apply {
-            setImageResource(R.drawable.ic_pause); setColorFilter(Neon.white)
-            setPadding(d(22), d(22), d(22), d(22))
-            background = Neon.circle(Color.parseColor("#1D1850"))
-            setOnClickListener { Hub.togglePlay() }
+        ctrlActive.addView(t("Transmissão Ativa", 22f, Neon.white, true).apply { gravity = Gravity.CENTER; setPadding(0, d(4), 0, d(2)) }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        ctrlActive.addView(t("Toque numa TV para tirar ou pôr na transmissão", 13f, Neon.soft).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        orbit = OrbitView(this).apply {
+            contentDescription = "Controle da transmissão: toque no meio para tocar ou pausar, arraste o anel para avançar"
+            onToggle = { Hub.togglePlay() }
+            onTv = { i -> Hub.tvs.getOrNull(i)?.let { it.setOn(!it.enabled) } }
+            onSeek = { p -> Hub.current?.durMs?.takeIf { it > 0 }?.let { Hub.seek((it * p).toLong()) } }
         }
-        ringBox.addView(ringIcon, FrameLayout.LayoutParams(d(110), d(110), Gravity.CENTER))
-        ctrlActive.addView(ringBox, LinearLayout.LayoutParams(d(170), d(170)))
-        ctrlActive.addView(t("Transmitindo para", 16f, Neon.soft).apply { gravity = Gravity.CENTER; setPadding(0, d(14), 0, 0) }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        tvCountText = t("", 30f, Neon.purple2, true).apply { gravity = Gravity.CENTER }
+        ctrlActive.addView(orbit, LinearLayout.LayoutParams(MATCH_PARENT, d(350)).apply { topMargin = d(4) })
+        ctrlActive.addView(t("Transmitindo para", 15f, Neon.soft).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        tvCountText = t("", 32f, Neon.lilac, true).apply { gravity = Gravity.CENTER }
         ctrlActive.addView(tvCountText, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
-        val thumbBox = FrameLayout(this).apply {
-            background = Neon.cardBg(this@MainActivity, Color.parseColor("#120F35"), 16)
-            clipToOutline = true
+        // o que está tocando (cartão de vidro)
+        val nowCard = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            background = Neon.cardBg(this@MainActivity, Neon.card, 20, 0, 0)
+            setPadding(d(10), d(10), d(14), d(10))
         }
         thumb = ImageView(this).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
             setImageResource(R.drawable.logo)
-            setPadding(d(30), d(30), d(30), d(30))
+            background = Neon.cardBg(this@MainActivity, Color.parseColor("#1D1850"), 12, 0, 0)
+            clipToOutline = true
         }
-        thumbBox.addView(thumb, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-        thumbBadge = t("HD", 12f, Neon.white, true).apply {
-            background = Neon.cardBg(this@MainActivity, Color.parseColor("#CC000000"), 6, 0, 0)
-            setPadding(d(8), d(3), d(8), d(3))
-        }
-        thumbBox.addView(thumbBadge, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.TOP or Gravity.END).apply {
-            topMargin = d(10); rightMargin = d(10)
-        })
-        ctrlActive.addView(thumbBox, LinearLayout.LayoutParams(MATCH_PARENT, d(180)).apply { topMargin = d(14) })
-        nowTitle = t("", 15f, Neon.white, true).apply {
-            maxLines = 2; ellipsize = TextUtils.TruncateAt.END; gravity = Gravity.CENTER; setPadding(0, d(10), 0, 0)
-        }
-        ctrlActive.addView(nowTitle, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        nowCard.addView(thumb, LinearLayout.LayoutParams(d(64), d(64)))
+        val nowCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(d(14), 0, 0, 0) }
+        nowTitle = t("", 15f, Neon.white, true).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
+        nowCol.addView(nowTitle)
+        thumbBadge = t("", 12f, Neon.lilac, true).apply { setPadding(0, d(4), 0, 0) }
+        nowCol.addView(thumbBadge)
+        nowCard.addView(nowCol, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        ctrlActive.addView(nowCard, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = d(18) })
 
         seek = SeekBar(this).apply {
-            progressTintList = android.content.res.ColorStateList.valueOf(Neon.purple2)
+            progressTintList = android.content.res.ColorStateList.valueOf(Neon.lilac)
             thumbTintList = android.content.res.ColorStateList.valueOf(Neon.white)
-            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#3B3766"))
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Color.argb(70, 255, 255, 255))
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
                     if (fromUser) timeText.text = "${fmt(p * 1000L)} / ${fmt(Hub.current?.durMs ?: 0)}"
@@ -541,45 +533,43 @@ class MainActivity : Activity() {
                 override fun onStopTrackingTouch(s: SeekBar?) { dragging = false; Hub.seek((s?.progress ?: 0) * 1000L) }
             })
         }
-        ctrlActive.addView(seek, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = d(10) })
-        timeText = t("0:00 / 0:00", 17f, Neon.white, true).apply { gravity = Gravity.CENTER }
+        ctrlActive.addView(seek, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = d(14) })
+        timeText = t("0:00 / 0:00", 13f, Neon.soft).apply { gravity = Gravity.CENTER }
         ctrlActive.addView(timeText, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
-        val btns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, d(14), 0, 0) }
-        fun ctl(ic: Int, label: String, f: () -> Unit): Pair<LinearLayout, ImageView> {
+        val btns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, d(16), 0, 0) }
+        fun ctl(ic: Int, label: String, f: () -> Unit): LinearLayout {
             val b = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
                 setOnClickListener { f() }
+                contentDescription = label
             }
             val iv = ImageView(this).apply {
                 setImageResource(ic); setColorFilter(Neon.white)
-                background = Neon.circle(Color.parseColor("#26205A"), Neon.stroke, d(1))
+                background = Neon.circle(Neon.card)
                 setPadding(d(14), d(14), d(14), d(14))
             }
-            b.addView(iv, LinearLayout.LayoutParams(d(54), d(54)))
-            val lbl = t(label, 13f, Neon.white).apply { gravity = Gravity.CENTER; setPadding(0, d(6), 0, 0) }
-            b.addView(lbl, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            b.addView(iv, LinearLayout.LayoutParams(d(52), d(52)))
+            b.addView(t(label, 12f, Neon.soft).apply { gravity = Gravity.CENTER; setPadding(0, d(6), 0, 0) },
+                LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             btns.addView(b, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-            return b to iv
+            return b
         }
-        prevBtn = ctl(R.drawable.ic_prev, "Anterior") { Hub.prev() }.first
-        ctl(R.drawable.ic_rewind10, "-10s") { Hub.skip(-10_000) }
-        val (pb, piv) = ctl(R.drawable.ic_pause, "Pausar") { Hub.togglePlay() }
-        pauseIcon = piv; pauseLabel = pb.getChildAt(1) as TextView
-        ctl(R.drawable.ic_forward10, "Avançar") { Hub.skip(10_000) }
-        nextBtn = ctl(R.drawable.ic_next, "Próxima") { Hub.next() }.first
+        prevBtn = ctl(R.drawable.ic_prev, "Anterior") { Hub.prev() }
+        ctl(R.drawable.ic_rewind10, "−10s") { Hub.skip(-10_000) }
+        ctl(R.drawable.ic_forward10, "+10s") { Hub.skip(10_000) }
+        nextBtn = ctl(R.drawable.ic_next, "Próxima") { Hub.next() }
         ctl(R.drawable.ic_stop, "Parar") { Hub.stopAll(); CaptureService.stop(this) }
         ctrlActive.addView(btns, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
-        syncCard = t("", 15f, Color.parseColor("#B9F8CF"), true).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            background = Neon.cardBg(this@MainActivity, Neon.greenDark, 16, Neon.green, 1)
-            setPadding(d(16), d(16), d(16), d(16))
-            compoundDrawablePadding = d(12)
-            setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_check, 0, 0, 0)
-            compoundDrawables[0]?.setTint(Neon.green)
+        syncCard = t("", 13f, Color.parseColor("#B9F8CF"), true).apply {
+            gravity = Gravity.CENTER
+            background = Neon.cardBg(this@MainActivity, Color.argb(60, 34, 197, 94), 20, 0, 0)
+            setPadding(d(16), d(9), d(16), d(9))
         }
-        ctrlActive.addView(syncCard, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = d(18) })
+        ctrlActive.addView(FrameLayout(this).apply {
+            addView(syncCard, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.CENTER_HORIZONTAL))
+        }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = d(18) })
         c.addView(ctrlActive, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         return scrollPage(c)
     }
@@ -757,26 +747,32 @@ class MainActivity : Activity() {
         ctrlEmpty.visibility = if (active) View.GONE else View.VISIBLE
         ctrlActive.visibility = if (active) View.VISIBLE else View.GONE
         tvCountText.text = if (n == 1) "1 TV" else "$n TVs"
+        orbit.tvs = Hub.tvs.map { OrbitView.Tv(it.name, it.enabled) }
+        orbit.playing = Hub.playing || (Hub.caixinha && cur == null)
+        orbit.speaker = Hub.caixinha && cur == null
+        orbit.seekable = cur != null
         if (Hub.caixinha && cur == null) {
-            nowTitle.text = "Som do celular (modo caixinha)"
-            thumb.setImageResource(R.drawable.logo); thumb.scaleType = ImageView.ScaleType.FIT_CENTER; thumb.setPadding(d(30), d(30), d(30), d(30))
-            thumbBadge.text = "AO VIVO"
-            syncCard.text = "Som do celular tocando nas TVs"
-            ringIcon.setImageResource(R.drawable.ic_speaker)
+            nowTitle.text = "Som do celular"
+            thumbUrl = null
+            thumb.setImageResource(R.drawable.logo)
+            thumbBadge.text = "AO VIVO · modo caixinha"
+            syncCard.text = "●  Som do celular tocando nas TVs"
+            orbit.timeText = "AO VIVO"
         } else if (cur != null) {
             nowTitle.text = cur.title
-            thumbBadge.text = when (cur.kind) { "youtube" -> "YouTube"; else -> cur.mime?.uppercase() ?: if (cur.uri != null) "CELULAR" else "LINK" }
+            thumbBadge.text = when {
+                cur.kind == "youtube" -> "YouTube"
+                cur.uri != null -> "Do celular"
+                else -> (cur.mime?.uppercase() ?: "LINK") + if (cur.proxy) " · pelo celular" else ""
+            }
             val wanted = cur.thumb ?: (if (cur.kind == "youtube") "https://i.ytimg.com/vi/${cur.url}/hqdefault.jpg" else null)
             if (wanted != thumbUrl) {
                 thumbUrl = wanted
-                thumb.setImageResource(R.drawable.logo); thumb.scaleType = ImageView.ScaleType.FIT_CENTER; thumb.setPadding(d(30), d(30), d(30), d(30))
+                thumb.scaleType = ImageView.ScaleType.FIT_CENTER
+                thumb.setImageResource(R.drawable.logo)
                 if (wanted != null) loadThumb(wanted)
             }
-            syncCard.text = if (Hub.autoSync) "Sincronizado em todas as televisões" else "Sincronização automática desligada"
-            val icon = if (Hub.playing) R.drawable.ic_pause else R.drawable.ic_play
-            ringIcon.setImageResource(icon)
-            pauseIcon.setImageResource(icon)
-            pauseLabel.text = if (Hub.playing) "Pausar" else "Tocar"
+            syncCard.text = if (Hub.autoSync) "●  Sincronizado em todas as TVs" else "●  Sincronização automática desligada"
         }
         val hasList = cur != null && Hub.currentIndex >= 0 && Hub.tracks.size > 1
         prevBtn.visibility = if (hasList) View.VISIBLE else View.GONE
@@ -790,7 +786,7 @@ class MainActivity : Activity() {
     private fun tvRow(tv: Hub.TvConn): View {
         val r = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            background = Neon.cardBg(this@MainActivity)
+            background = Neon.cardBg(this@MainActivity, Neon.card, 18, 0, 0)
             setPadding(d(10), d(10), d(14), d(10))
         }
         val screen = FrameLayout(this).apply {
@@ -825,7 +821,8 @@ class MainActivity : Activity() {
             seek.progress = (pos / 1000).toInt()
             timeText.text = if (dur > 0) "${fmt(pos)} / ${fmt(dur)}" else fmt(pos)
         }
-        ring.progress = if (dur > 0) pos.toFloat() / dur else 0f
+        orbit.progress = if (dur > 0) pos.toFloat() / dur else 0f
+        orbit.timeText = fmt(pos)
     }
 
     private fun loadThumb(url: String) {
@@ -835,7 +832,7 @@ class MainActivity : Activity() {
                 c.connectTimeout = 6000; c.readTimeout = 8000
                 val bytes = c.inputStream.use { it.readBytes() }
                 val bmp: Bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return@thread
-                ui.post { if (thumbUrl == url) { thumb.scaleType = ImageView.ScaleType.CENTER_CROP; thumb.setPadding(0, 0, 0, 0); thumb.setImageBitmap(bmp) } }
+                ui.post { if (thumbUrl == url) { thumb.scaleType = ImageView.ScaleType.CENTER_CROP; thumb.setImageBitmap(bmp) } }
             } catch (_: Exception) {}
         }
     }

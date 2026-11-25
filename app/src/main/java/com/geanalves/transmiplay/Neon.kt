@@ -15,11 +15,14 @@ import android.widget.TextView
 
 /** Cores e peças do visual roxo neon. */
 object Neon {
-    val bgTop = Color.parseColor("#14104A")
-    val bgBottom = Color.parseColor("#06051A")
-    val card = Color.parseColor("#1A1645")
-    val cardHi = Color.parseColor("#251E5C")
-    val stroke = Color.parseColor("#3A3180")
+    // mesmo degradê da tela da TV
+    val bgTop = Color.parseColor("#1C1166")
+    val bgMid = Color.parseColor("#07061C")
+    val bgBottom = Color.parseColor("#2A0F6B")
+    // cartões de "vidro": branco bem transparente, quase sem borda
+    val card = Color.argb(22, 255, 255, 255)
+    val cardHi = Color.argb(40, 255, 255, 255)
+    val stroke = Color.argb(30, 255, 255, 255)
     val purple = Color.parseColor("#7C3AED")
     val purple2 = Color.parseColor("#9D5CFF")
     val lilac = Color.parseColor("#B79CFF")
@@ -32,7 +35,7 @@ object Neon {
 
     fun dp(ctx: Context, v: Int) = (v * ctx.resources.displayMetrics.density).toInt()
 
-    fun background() = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(bgTop, bgBottom))
+    fun background() = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(bgTop, bgMid, bgBottom))
 
     fun cardBg(ctx: Context, color: Int = card, radius: Int = 16, strokeColor: Int = stroke, strokeW: Int = 1) =
         GradientDrawable().apply {

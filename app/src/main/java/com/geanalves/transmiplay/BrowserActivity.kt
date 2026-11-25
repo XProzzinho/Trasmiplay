@@ -69,7 +69,7 @@ fun looksLikeAdUrl(url: String): Boolean {
 class BrowserActivity : Activity() {
 
     // ------------------------------------------------------------------ cores
-    private val bg = Color.parseColor("#0B0A24")
+    private val bg = Color.parseColor("#0B0826")
     private val bar = Neon.bgTop
     private val field = Color.parseColor("#241D5E")
     private val line = Neon.stroke
@@ -160,7 +160,7 @@ class BrowserActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = bar
+        window.statusBarColor = Neon.bgTop
         window.navigationBarColor = bg
         TransmitService.start(this)
         Hub.start(applicationContext)
