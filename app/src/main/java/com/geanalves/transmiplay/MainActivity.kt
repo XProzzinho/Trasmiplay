@@ -255,9 +255,9 @@ class MainActivity : Activity() {
                 setOnClickListener { selectTab(i) }
             }
             val iv = Neon.icon(this, ic, Neon.soft, 2)
-            val tv = t(label, 11f, Neon.soft)
+            val tv = t(label, 11f, Neon.soft).apply { gravity = Gravity.CENTER; maxLines = 1 }
             item.addView(iv, LinearLayout.LayoutParams(d(28), d(28)))
-            item.addView(tv)
+            item.addView(tv, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             nav.addView(item, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
             iv to tv
         }
@@ -480,17 +480,17 @@ class MainActivity : Activity() {
         // vazio
         ctrlEmpty = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
         ctrlEmpty.addView(ImageView(this).apply { setImageResource(R.drawable.logo); alpha = 0.9f }, LinearLayout.LayoutParams(d(120), d(120)).apply { topMargin = d(40) })
-        ctrlEmpty.addView(t("Nada transmitindo agora", 20f, Neon.white, true).apply { setPadding(0, d(20), 0, d(6)) })
+        ctrlEmpty.addView(t("Nada transmitindo agora", 20f, Neon.white, true).apply { gravity = Gravity.CENTER; setPadding(0, d(20), 0, d(6)) }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         ctrlEmpty.addView(t("Escolha um site, um vídeo do celular, um link ou o som do celular na aba Início.", 14f, Neon.soft).apply {
             gravity = Gravity.CENTER
-        })
+        }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         ctrlEmpty.addView(Neon.bigButton(this, "Abrir o navegador", R.drawable.ic_globe) { selectTab(1) },
             LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = d(24) })
         c.addView(ctrlEmpty, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
         // ativo
         ctrlActive = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
-        ctrlActive.addView(t("Transmissão Ativa", 22f, Neon.white, true).apply { setPadding(0, d(6), 0, d(14)) })
+        ctrlActive.addView(t("Transmissão Ativa", 22f, Neon.white, true).apply { gravity = Gravity.CENTER; setPadding(0, d(6), 0, d(14)) }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         val ringBox = FrameLayout(this)
         ring = Neon.Ring(this)
         ringBox.addView(ring, FrameLayout.LayoutParams(d(170), d(170)))
@@ -502,15 +502,19 @@ class MainActivity : Activity() {
         }
         ringBox.addView(ringIcon, FrameLayout.LayoutParams(d(110), d(110), Gravity.CENTER))
         ctrlActive.addView(ringBox, LinearLayout.LayoutParams(d(170), d(170)))
-        ctrlActive.addView(t("Transmitindo para", 16f, Neon.soft).apply { setPadding(0, d(14), 0, 0) })
-        tvCountText = t("", 30f, Neon.purple2, true)
-        ctrlActive.addView(tvCountText)
+        ctrlActive.addView(t("Transmitindo para", 16f, Neon.soft).apply { gravity = Gravity.CENTER; setPadding(0, d(14), 0, 0) }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        tvCountText = t("", 30f, Neon.purple2, true).apply { gravity = Gravity.CENTER }
+        ctrlActive.addView(tvCountText, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
         val thumbBox = FrameLayout(this).apply {
             background = Neon.cardBg(this@MainActivity, Color.parseColor("#120F35"), 16)
             clipToOutline = true
         }
-        thumb = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+        thumb = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setImageResource(R.drawable.logo)
+            setPadding(d(30), d(30), d(30), d(30))
+        }
         thumbBox.addView(thumb, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         thumbBadge = t("HD", 12f, Neon.white, true).apply {
             background = Neon.cardBg(this@MainActivity, Color.parseColor("#CC000000"), 6, 0, 0)
@@ -538,8 +542,8 @@ class MainActivity : Activity() {
             })
         }
         ctrlActive.addView(seek, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = d(10) })
-        timeText = t("0:00 / 0:00", 17f, Neon.white, true)
-        ctrlActive.addView(timeText)
+        timeText = t("0:00 / 0:00", 17f, Neon.white, true).apply { gravity = Gravity.CENTER }
+        ctrlActive.addView(timeText, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
         val btns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, d(14), 0, 0) }
         fun ctl(ic: Int, label: String, f: () -> Unit): Pair<LinearLayout, ImageView> {
@@ -755,7 +759,7 @@ class MainActivity : Activity() {
         tvCountText.text = if (n == 1) "1 TV" else "$n TVs"
         if (Hub.caixinha && cur == null) {
             nowTitle.text = "Som do celular (modo caixinha)"
-            thumb.setImageResource(R.drawable.logo); thumb.scaleType = ImageView.ScaleType.FIT_CENTER
+            thumb.setImageResource(R.drawable.logo); thumb.scaleType = ImageView.ScaleType.FIT_CENTER; thumb.setPadding(d(30), d(30), d(30), d(30))
             thumbBadge.text = "AO VIVO"
             syncCard.text = "Som do celular tocando nas TVs"
             ringIcon.setImageResource(R.drawable.ic_speaker)
@@ -765,7 +769,7 @@ class MainActivity : Activity() {
             val wanted = cur.thumb ?: (if (cur.kind == "youtube") "https://i.ytimg.com/vi/${cur.url}/hqdefault.jpg" else null)
             if (wanted != thumbUrl) {
                 thumbUrl = wanted
-                thumb.setImageResource(R.drawable.logo); thumb.scaleType = ImageView.ScaleType.FIT_CENTER
+                thumb.setImageResource(R.drawable.logo); thumb.scaleType = ImageView.ScaleType.FIT_CENTER; thumb.setPadding(d(30), d(30), d(30), d(30))
                 if (wanted != null) loadThumb(wanted)
             }
             syncCard.text = if (Hub.autoSync) "Sincronizado em todas as televisões" else "Sincronização automática desligada"
@@ -831,7 +835,7 @@ class MainActivity : Activity() {
                 c.connectTimeout = 6000; c.readTimeout = 8000
                 val bytes = c.inputStream.use { it.readBytes() }
                 val bmp: Bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return@thread
-                ui.post { if (thumbUrl == url) { thumb.scaleType = ImageView.ScaleType.CENTER_CROP; thumb.setImageBitmap(bmp) } }
+                ui.post { if (thumbUrl == url) { thumb.scaleType = ImageView.ScaleType.CENTER_CROP; thumb.setPadding(0, 0, 0, 0); thumb.setImageBitmap(bmp) } }
             } catch (_: Exception) {}
         }
     }
@@ -929,13 +933,13 @@ class MainActivity : Activity() {
             isClickable = true
         }
         s.addView(ImageView(this).apply { setImageResource(R.drawable.logo) }, LinearLayout.LayoutParams(d(170), d(170)))
-        s.addView(Neon.brand(this, "Transmi", "play", 42f).apply { setPadding(0, d(22), 0, d(6)) })
-        s.addView(t("Transmita para várias TVs\nao mesmo tempo", 18f, Color.parseColor("#D6D3F5")).apply { gravity = Gravity.CENTER })
+        s.addView(Neon.brand(this, "Transmi", "play", 42f).apply { gravity = Gravity.CENTER; setPadding(0, d(22), 0, d(6)) }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        s.addView(t("Transmita para várias TVs\nao mesmo tempo", 18f, Color.parseColor("#D6D3F5")).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         val tag = android.text.SpannableStringBuilder("Conecte • ").apply {
             val a = length; append("Transmita • Aproveite")
             setSpan(android.text.style.ForegroundColorSpan(Neon.lilac), a, length, 0)
         }
-        s.addView(t(tag, 16f, Neon.white, true).apply { setPadding(0, d(40), 0, 0) })
+        s.addView(t(tag, 16f, Neon.white, true).apply { gravity = Gravity.CENTER; setPadding(0, d(40), 0, 0) }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(s, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         ui.postDelayed({
             s.animate().alpha(0f).setDuration(350).withEndAction { root.removeView(s) }.start()
