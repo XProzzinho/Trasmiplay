@@ -153,11 +153,21 @@ class HttpServer(private val port: Int) {
             if (range != null) conn.setRequestProperty("Range", range)
             val code = conn.responseCode
             val ct = conn.contentType ?: "application/octet-stream"
-            val isList = ct.contains("mpegurl", true) ||
+            var isList = ct.contains("mpegurl", true) ||
                 target.substringBefore('?').endsWith(".m3u8", true) ||
                 target.substringBefore('?').endsWith(".m3u", true)
-            if (isList && code in 200..299) {
-                val text = conn.inputStream.bufferedReader().readText()
+            var body: java.io.InputStream? = if (code in 200..299) java.io.BufferedInputStream(conn.inputStream, 64 * 1024) else null
+            // lista escondida sem ".m3u8" no nome: olha o comecinho do conteúdo
+            if (!isList && body != null && !ct.startsWith("video", true) && !ct.startsWith("audio", true)) {
+                body.mark(32)
+                val head = ByteArray(7)
+                var got = 0
+                while (got < 7) { val n = body.read(head, got, 7 - got); if (n <= 0) break; got += n }
+                body.reset()
+                if (got == 7 && String(head) == "#EXTM3U") isList = true
+            }
+            if (isList && body != null) {
+                val text = body.bufferedReader().readText()
                 if (text.trimStart().startsWith("#EXTM3U")) {
                     val bytes = rewriteM3u8(text, conn.url).toByteArray()
                     writeHead(out, "200 OK", "application/vnd.apple.mpegurl", bytes.size.toLong(), null)
@@ -173,7 +183,7 @@ class HttpServer(private val port: Int) {
             val status = if (code == 206) "206 Partial Content" else if (code in 200..299) "200 OK" else "$code Erro"
             writeHead(out, status, ct, len, conn.getHeaderField("Content-Range"))
             if (method == "HEAD") return
-            val src = if (code in 200..299) conn.inputStream else conn.errorStream
+            val src = body ?: conn.errorStream
             src?.use { copy(it, out, len) }
         } catch (e: Exception) {
             try { writeHead(out, "502 Bad Gateway", "text/plain", 0, null) } catch (_: Exception) {}

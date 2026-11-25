@@ -89,6 +89,7 @@ class BrowserActivity : Activity() {
         @Volatile var h: Int = 0,
         val ytId: String? = null,
         @Volatile var durSec: Double = 0.0,   // duração vista no <video> da página
+        val referer: String = pageUrl,        // endereço do player (quando o vídeo está num quadro)
     ) {
         val fileName: String
             get() = ytId ?: (Uri.parse(url).lastPathSegment?.substringBeforeLast('.')?.takeIf { it.isNotBlank() } ?: "vídeo")
@@ -627,6 +628,10 @@ class BrowserActivity : Activity() {
         CookieManager.getInstance().setAcceptThirdPartyCookies(w, true)
         w.addJavascriptInterface(PageBridge(t), "TP")
         if (androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            // detector de vídeo roda antes do site, em todos os quadros (players embutidos)
+            try { androidx.webkit.WebViewCompat.addDocumentStartJavaScript(w, sniffJs(), setOf("*")) } catch (_: Exception) {}
+        }
+        if (androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.DOCUMENT_START_SCRIPT)) {
             // roda o bloqueador antes da página, inclusive dentro dos quadros (o próprio script vê se está ligado)
             try { androidx.webkit.WebViewCompat.addDocumentStartJavaScript(w, AdBlock.script(this@BrowserActivity), setOf("*")) } catch (_: Exception) {}
         }
@@ -665,6 +670,7 @@ class BrowserActivity : Activity() {
                 t.title = view.title ?: ""
                 WebStore.visit(this@BrowserActivity, url, t.title)
                 if (blockAds) view.evaluateJavascript(AdBlock.script(this@BrowserActivity), null)
+                view.evaluateJavascript(sniffJs(), null)
                 view.evaluateJavascript(SCAN_JS, null)
                 if (t == tab) {
                     progress.visibility = View.GONE
@@ -748,8 +754,9 @@ class BrowserActivity : Activity() {
         val path = lower.substringBefore('?').substringBefore('#')
         if (lower.contains("googlevideo.com/videoplayback")) return // YouTube é tratado à parte
         val type = when {
-            path.endsWith(".m3u8") || lower.contains(".m3u8?") || lower.contains("mime=application%2fx-mpegurl") -> "m3u8"
-            path.endsWith(".mpd") -> "mpd"
+            path.endsWith(".m3u8") || lower.contains(".m3u8") || lower.contains("mime=application%2fx-mpegurl") ||
+                lower.contains("format=m3u8") || lower.contains("type=hls") -> "m3u8"
+            path.endsWith(".mpd") || lower.contains(".mpd?") || lower.contains("format=mpd") -> "mpd"
             path.endsWith(".mp4") || path.endsWith(".m4v") -> "mp4"
             path.endsWith(".webm") -> "webm"
             path.endsWith(".mkv") -> "mkv"
@@ -768,7 +775,7 @@ class BrowserActivity : Activity() {
         if (!t.subs.containsKey(url)) t.subs[url] = SubFound(url, mime)
     }
 
-    private fun addVideo(t: Tab, url: String, type: String, w: Int = 0, h: Int = 0, dur: Double = 0.0) = ui.post {
+    private fun addVideo(t: Tab, url: String, type: String, w: Int = 0, h: Int = 0, dur: Double = 0.0, referer: String? = null) = ui.post {
         val existing = t.videos[url]
         if (existing != null) {
             if (w > 0) { existing.w = w; existing.h = h }
@@ -778,7 +785,8 @@ class BrowserActivity : Activity() {
         if (t.videos.size >= 40) return@post
         // m3u8 de pedaços (ts) de uma lista que já temos não interessa
         t.videos[url] = Video(url, type, t.pageUrl, t.title.ifBlank { WebStore.host(t.pageUrl) }, t.ogImage, w, h,
-            durSec = if (dur.isFinite() && dur > 0) dur else 0.0)
+            durSec = if (dur.isFinite() && dur > 0) dur else 0.0,
+            referer = referer?.takeIf { it.startsWith("http") } ?: t.pageUrl)
         if (t == tab) { updateFound(pulse = true) }
         videoList?.let { if (t == tab) renderVideoList() }
     }
@@ -800,6 +808,15 @@ class BrowserActivity : Activity() {
     inner class PageBridge(private val t: Tab) {
         @JavascriptInterface
         fun adsOn(): Boolean = blockAds
+
+        /** vídeo achado pelo conteúdo (lista m3u8/mpd) ou pelo player, inclusive dentro de quadros */
+        @JavascriptInterface
+        fun foundType(src: String, type: String, frameUrl: String, frameTitle: String) {
+            if (!src.startsWith("http") || src.contains("googlevideo.com")) return
+            val ty = if (type in setOf("m3u8", "mpd", "mp4", "webm", "mp3")) type else "mp4"
+            if (t.title.isBlank() && frameTitle.isNotBlank()) t.title = frameTitle
+            addVideo(t, src, ty, referer = frameUrl)
+        }
 
         @JavascriptInterface
         fun blocked() = countBlocked(t)
@@ -829,6 +846,9 @@ class BrowserActivity : Activity() {
             }
         }
     }
+
+    @Volatile private var sniffCache: String? = null
+    private fun sniffJs(): String = sniffCache ?: assets.open("sniff.js").bufferedReader().readText().also { sniffCache = it }
 
     // ================================================================== escudo (bloqueador)
 
@@ -1067,9 +1087,9 @@ class BrowserActivity : Activity() {
     private fun headersFor(v: Video): Map<String, String> {
         val h = LinkedHashMap<String, String>()
         h["User-Agent"] = userAgent
-        h["Referer"] = v.pageUrl
+        h["Referer"] = v.referer
         try {
-            val p = URL(v.pageUrl)
+            val p = URL(v.referer)
             h["Origin"] = "${p.protocol}://${p.host}" + (if (p.port > 0) ":${p.port}" else "")
         } catch (_: Exception) {}
         CookieManager.getInstance().getCookie(v.url)?.let { if (it.isNotBlank()) h["Cookie"] = it }
