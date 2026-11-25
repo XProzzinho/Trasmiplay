@@ -571,6 +571,7 @@ class MainActivity : Activity() {
         ctrlActive.addView(btns, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
         syncCard = t("", 13f, Color.parseColor("#0E7490"), true).apply {
+            setOnClickListener { showMicSync() }
             gravity = Gravity.CENTER
             background = Neon.cardBg(this@MainActivity, Color.parseColor("#ECFEFF"), 20, 0, 0)
             setPadding(d(16), d(9), d(16), d(9))
@@ -630,6 +631,8 @@ class MainActivity : Activity() {
 
         c.addView(section("Mais"))
         val more = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = Neon.cardBg(this@MainActivity) }
+        more.addView(linkRow(R.drawable.ic_wifi, "Sincronizar pelo microfone", null, card = false) { showMicSync() })
+        more.addView(divider())
         more.addView(linkRow(R.drawable.ic_speaker, "Caixas de som Bluetooth das TVs", null, card = false) { pickSpeakerTv() })
         more.addView(divider())
         more.addView(linkRow(R.drawable.ic_tv, "Ajustar atraso das TVs", null, card = false) { adjustDialog() })
@@ -915,6 +918,102 @@ class MainActivity : Activity() {
         }
     }
 
+    // ================================================================== sincronizar pelo microfone
+
+    private var micBody: LinearLayout? = null
+    private var micStatus = ""
+    private val micResult = HashMap<String, String>()
+
+    private fun showMicSync() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
+            return
+        }
+        if (Hub.tvs.isEmpty()) { toast("Nenhuma TV conectada. Abra o Simulplay nas TVs."); return }
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(d(20), d(6), d(20), d(10)) }
+        micBody = body
+        renderMic()
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
+            .setTitle("Sincronizar pelo microfone")
+            .setView(ScrollView(this).apply { addView(body) })
+            .setPositiveButton("Fechar", null)
+            .setOnDismissListener { micBody = null }
+            .show()
+    }
+
+    private fun renderMic() {
+        val body = micBody ?: return
+        body.removeAllViews()
+        fun lp(top: Int = 0) = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = d(top) }
+        body.addView(t("O celular escuta as TVs e acerta o atraso de cada uma sozinho. Cada TV apita num tom diferente.", 14f, Neon.soft))
+        body.addView(t("Antes: aumente o volume das TVs e deixe o ambiente quieto.", 13f, Neon.soft), lp(8))
+
+        body.addView(t("Todas de uma vez", 15f, Neon.white, true), lp(16))
+        body.addView(t("Fique no meio, mais ou menos na mesma distância de cada TV ou caixa, com o celular parado.", 13f, Neon.soft), lp(2))
+        body.addView(Neon.bigButton(this, if (MicSync.running) "Escutando…" else "Sincronizar todas", R.drawable.ic_wifi) {
+            if (!MicSync.running) startMic(Hub.tvs.toList())
+        }, lp(10))
+
+        body.addView(t("Uma por vez", 15f, Neon.white, true), lp(18))
+        body.addView(t("Chegue pertinho de uma TV (ou da caixa dela) e toque em Medir. Depois vá na próxima.", 13f, Neon.soft), lp(2))
+        for (tv in Hub.tvs) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                background = Neon.cardBg(this@MainActivity, Color.WHITE, 14, Neon.stroke, 1)
+                setPadding(d(12), d(10), d(8), d(10))
+            }
+            val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            col.addView(t(tv.name, 15f, Neon.white, true))
+            col.addView(t(micResult[tv.name] ?: "ajuste atual: ${tv.adj} ms", 12f, Neon.soft))
+            row.addView(col, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+            row.addView(t("Medir", 13f, Color.WHITE, true).apply {
+                background = Neon.buttonBg(this@MainActivity, 16); setPadding(d(14), d(8), d(14), d(8))
+                setOnClickListener { if (!MicSync.running) startMic(listOf(tv)) }
+            })
+            body.addView(row, lp(8))
+        }
+        if (micStatus.isNotBlank()) {
+            body.addView(t(micStatus, 14f, Color.parseColor("#1E40AF"), true).apply {
+                background = Neon.cardBg(this@MainActivity, Color.parseColor("#EFF6FF"), 12, Color.parseColor("#BFDBFE"), 1)
+                setPadding(d(12), d(10), d(12), d(10))
+            }, lp(14))
+        }
+        body.addView(t("Zerar medições", 13f, Neon.purple, true).apply {
+            setPadding(0, d(14), 0, d(4))
+            setOnClickListener { MicSync.forget(); micResult.clear(); micStatus = "Medições zeradas."; renderMic() }
+        })
+    }
+
+    private fun startMic(list: List<Hub.TvConn>) {
+        if (Hub.playing) Hub.togglePlay() // pausa pra música não atrapalhar
+        micStatus = "Prepare-se… as TVs vão apitar"
+        renderMic()
+        val before = list.associateWith { it.adj }
+        MicSync.run(list, progress = { micStatus = it; renderMic() }) { res ->
+            var heard = 0
+            for ((tv, e) in res) {
+                if (e == null) { micResult[tv.name] = "não ouvi o apito (aumente o volume ou chegue mais perto)"; continue }
+                heard++
+                val diff = tv.adj - (before[tv] ?: tv.adj)
+                micResult[tv.name] = when {
+                    MicSync.measured.size < 2 -> "medida ok · agora meça outra TV pra comparar"
+                    diff == 0 -> "já estava certinha ✓"
+                    diff < 0 -> "estava atrasada ${-diff} ms → corrigido ✓"
+                    else -> "estava adiantada $diff ms → corrigido ✓"
+                }
+            }
+            // as outras TVs também podem ter sido corrigidas (alinhadas com a nova)
+            for (tv in Hub.tvs) if (tv !in res.keys && MicSync.measured.containsKey(tv.name)) micResult[tv.name] = "ajuste: ${tv.adj} ms"
+            micStatus = when {
+                heard == 0 -> "Não ouvi nenhum apito. Aumente o volume das TVs e tente de novo."
+                MicSync.measured.size < 2 -> "Pronto! Agora meça outra TV."
+                else -> "Pronto! As TVs foram alinhadas."
+            }
+            renderMic()
+            refresh()
+        }
+    }
+
     // ================================================================== atraso das TVs
 
     private fun adjustDialog(only: Hub.TvConn? = null) {
@@ -1050,6 +1149,10 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_MIC) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) showMicSync()
+            else toast("Sem o microfone não dá pra escutar as TVs")
+        }
         if (requestCode == REQ_AUDIO) {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) toggleCaixinha()
             else toast("Sem a permissão de áudio não dá pra pegar o som")
@@ -1081,6 +1184,7 @@ class MainActivity : Activity() {
         const val REQ_PICK = 1
         const val REQ_AUDIO = 2
         const val REQ_PROJECTION = 3
+        const val REQ_MIC = 4
         const val EXTRA_MODE = "mode"
         const val EXTRA_CONTROL = "control"
     }
