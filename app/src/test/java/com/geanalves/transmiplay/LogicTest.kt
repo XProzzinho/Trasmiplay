@@ -51,6 +51,6 @@ class LogicTest {
         assertEquals(false, AdBlock.shouldBlock("https://site.com/ads/ok.js", "https://www.site.com/"))
         assertEquals(false, AdBlock.shouldBlock("https://cdn.jsdelivr.net/npm/hls.js", "https://site.com/"))
         assertEquals("site.com.br", AdBlock.site("player.site.com.br"))
-        java.io.File("build/adblock.js").writeText(AdBlock.SCRIPT)
+        java.io.File("build/adblock.js").writeText(AdBlock.build(java.io.File("src/main/assets/shield.js").readText()))
     }
 }

@@ -628,7 +628,7 @@ class BrowserActivity : Activity() {
         w.addJavascriptInterface(PageBridge(t), "TP")
         if (androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.DOCUMENT_START_SCRIPT)) {
             // roda o bloqueador antes da página, inclusive dentro dos quadros (o próprio script vê se está ligado)
-            try { androidx.webkit.WebViewCompat.addDocumentStartJavaScript(w, AdBlock.SCRIPT, setOf("*")) } catch (_: Exception) {}
+            try { androidx.webkit.WebViewCompat.addDocumentStartJavaScript(w, AdBlock.script(this@BrowserActivity), setOf("*")) } catch (_: Exception) {}
         }
 
         w.webViewClient = object : WebViewClient() {
@@ -649,7 +649,7 @@ class BrowserActivity : Activity() {
                     t.videos.clear(); t.subs.clear(); t.ogImage = null; t.blocked = 0
                     if (t == tab) updateShield()
                 }
-                if (blockAds) view.evaluateJavascript(AdBlock.SCRIPT, null)
+                if (blockAds) view.evaluateJavascript(AdBlock.script(this@BrowserActivity), null)
                 t.pageUrl = url
                 if (t == tab) {
                     if (!address.hasFocus()) address.setText(url)
@@ -664,7 +664,7 @@ class BrowserActivity : Activity() {
                 t.pageUrl = url
                 t.title = view.title ?: ""
                 WebStore.visit(this@BrowserActivity, url, t.title)
-                if (blockAds) view.evaluateJavascript(AdBlock.SCRIPT, null)
+                if (blockAds) view.evaluateJavascript(AdBlock.script(this@BrowserActivity), null)
                 view.evaluateJavascript(SCAN_JS, null)
                 if (t == tab) {
                     progress.visibility = View.GONE
@@ -689,7 +689,8 @@ class BrowserActivity : Activity() {
                 val host = request.url.host ?: ""
                 if (blockAds && !request.isForMainFrame && AdBlock.shouldBlock(u, t.pageUrl)) {
                     countBlocked(t)
-                    return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+                    // resposta falsa (e não erro): o site acha que o anúncio carregou
+                    return AdBlock.fakeResponse(u, request.requestHeaders?.get("Accept"))
                 }
                 sniff(t, u, request.requestHeaders)
                 return null

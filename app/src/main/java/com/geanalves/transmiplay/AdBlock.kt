@@ -92,69 +92,60 @@ object AdBlock {
         return PATHS.any { path.contains(it) }
     }
 
-    /** CSS que some com os espaços de anúncio */
-    private const val CSS = """
-ins.adsbygoogle,.adsbygoogle,[id^="google_ads_"],[id^="div-gpt-ad"],[data-google-query-id],
-iframe[src*="doubleclick.net"],iframe[src*="googlesyndication"],iframe[id^="google_ads_iframe"],
-iframe[src*="adsterra"],iframe[src*="exoclick"],iframe[src*="juicyads"],iframe[src*="popads"],
-[id^="taboola-"],.trc_rbox_container,.OUTBRAIN,[data-widget-id^="outbrain"],[id^="mgid_"],[id*="ScriptRoot"],
-.ad-container,.ad-slot,.ad-banner,.ad_banner,.adbanner,.banner-ad,.ads-banner,.advertisement,.advertising,
-.adsbox,.ad-box,.adBox,.adwrapper,.ad-wrapper,.ad-placeholder,.sponsored-content,.sponsor-box,
-#ad,#ads,#ad-banner,#adbanner,#banner-ad,#publicidade,.publicidade,.anuncio,.anuncios,.ads-area,
-[aria-label="Advertisement"],[aria-label="Publicidade"],[aria-label="Anúncio"],
-div[id^="adsterra"],div[class*="popunder"],a[href*="adsterra"],a[href*="/aff_c?"],a[href*="popads"],
-div[id^="ad_position"],div[class^="adunit"],div[class*=" adunit"]
-{display:none!important;visibility:hidden!important;height:0!important;min-height:0!important;}
-"""
+    /** espaços de anúncio que o escudo esconde (o site continua achando que estão lá) */
+    val SELECTORS = listOf(
+        "ins.adsbygoogle", ".adsbygoogle", "[id^=\"google_ads_\"]", "[id^=\"div-gpt-ad\"]", "[data-google-query-id]",
+        "iframe[src*=\"doubleclick.net\"]", "iframe[src*=\"googlesyndication\"]", "iframe[id^=\"google_ads_iframe\"]",
+        "iframe[src*=\"adsterra\"]", "iframe[src*=\"exoclick\"]", "iframe[src*=\"juicyads\"]", "iframe[src*=\"popads\"]",
+        "[id^=\"taboola-\"]", ".trc_rbox_container", ".OUTBRAIN", "[data-widget-id^=\"outbrain\"]", "[id^=\"mgid_\"]",
+        "[id*=\"ScriptRoot\"]", ".ad-container", ".ad-slot", ".ad-banner", ".ad_banner", ".adbanner", ".banner-ad",
+        ".ads-banner", ".advertisement", ".advertising", ".adsbox", ".ad-box", ".adBox", ".adwrapper", ".ad-wrapper",
+        ".ad-placeholder", ".sponsored-content", ".sponsor-box", "#ad", "#ads", "#ad-banner", "#adbanner", "#banner-ad",
+        "#publicidade", ".publicidade", ".anuncio", ".anuncios", ".ads-area", "[aria-label=\"Advertisement\"]",
+        "[aria-label=\"Publicidade\"]", "[aria-label=\"Anúncio\"]", "div[id^=\"adsterra\"]", "div[class*=\"popunder\"]",
+        "a[href*=\"adsterra\"]", "a[href*=\"/aff_c?\"]", "a[href*=\"popads\"]", "div[id^=\"ad_position\"]",
+        "div[class^=\"adunit\"]", "div[class*=\" adunit\"]",
+    )
+
+    @Volatile private var cached: String? = null
+
+    /** script que roda em cada página (e dentro dos quadros) */
+    fun script(ctx: android.content.Context): String =
+        cached ?: build(ctx.assets.open("shield.js").bufferedReader().readText()).also { cached = it }
+
+    fun build(template: String): String {
+        val hosts = HOSTS.filter { !it.contains('/') }.joinToString(",", "[", "]") { jsString(it) }
+        return template.replace("__HOSTS__", hosts).replace("__SEL__", jsString(SELECTORS.joinToString(",")))
+    }
 
     /**
-     * Script que roda em cada página (e dentro dos quadros):
-     * aplica o CSS, tira quadros de propaganda e camadas invisíveis que roubam o toque.
+     * Em vez de dar erro (que o site percebe), devolve uma resposta falsa e vazia:
+     * script que "carrega", imagem de 1 pixel, página em branco.
      */
-    val SCRIPT: String = """
-(function(){
-  try{ if(window.TP && TP.adsOn && !TP.adsOn()) return; }catch(e){}
-  if(window.__tpShield) return; window.__tpShield=1;
-  var bad=${HOSTS.filter { !it.contains('/') }.joinToString(",", "[", "]") { "\"$it\"" }};
-  function isBad(u){ try{ var h=new URL(u,location.href).hostname; for(var i=0;i<bad.length;i++){var b=bad[i]; if(h===b||h.endsWith('.'+b)) return true;} }catch(e){} return false; }
-  function css(){ if(document.getElementById('__tpcss')) return; var s=document.createElement('style'); s.id='__tpcss';
-    s.textContent=${'$'}{JSON.stringify(CSS_PLACEHOLDER)}; (document.head||document.documentElement).appendChild(s); }
-  var count=0;
-  function bump(){ count++; try{ TP.blocked(); }catch(e){} }
-  function vw(){return Math.max(document.documentElement.clientWidth,window.innerWidth||0);}
-  function vh(){return Math.max(document.documentElement.clientHeight,window.innerHeight||0);}
-  function clean(){
-    css();
-    var fr=document.querySelectorAll('iframe,embed,object');
-    for(var i=0;i<fr.length;i++){ var f=fr[i]; var src=f.src||f.data||''; if(src&&isBad(src)){ f.remove(); bump(); } }
-    // camadas invisíveis por cima do vídeo que abrem propaganda
-    var all=document.querySelectorAll('a,div,span,ins');
-    var W=vw(),H=vh();
-    for(var j=0;j<all.length;j++){
-      var el=all[j]; if(el.__tpok) continue;
-      var st=getComputedStyle(el); if(st.position!=='fixed'&&st.position!=='absolute') { el.__tpok=1; continue; }
-      var r=el.getBoundingClientRect(); if(r.width<W*0.5||r.height<H*0.3) { el.__tpok=1; continue; }
-      if(el.querySelector('video,iframe[allowfullscreen]')) { el.__tpok=1; continue; }
-      var z=parseInt(st.zIndex)||0;
-      var see=parseFloat(st.opacity);
-      var bg=st.backgroundColor; var clear=(bg==='rgba(0, 0, 0, 0)'||bg==='transparent')&&!el.textContent.trim()&&!el.querySelector('img,svg,canvas');
-      var link=el.tagName==='A'&&el.target==='_blank'&&el.href&&(new URL(el.href,location.href).hostname!==location.hostname);
-      if((z>=100&&(see<0.05||clear)) || (link&&z>=10) || (el.href&&isBad(el.href))){ el.remove(); bump(); }
-      else el.__tpok=1;
+    fun fakeResponse(url: String, accept: String?): android.webkit.WebResourceResponse {
+        val path = url.lowercase().substringBefore('?')
+        val acc = accept?.lowercase() ?: ""
+        val (mime, body) = when {
+            path.endsWith(".js") || acc.contains("javascript") || path.contains("adsbygoogle") || path.contains("gpt") ->
+                "application/javascript" to "/* tp */".toByteArray()
+            path.endsWith(".gif") || path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".jpeg") ||
+                path.endsWith(".webp") || acc.startsWith("image/") -> "image/gif" to GIF
+            path.endsWith(".css") || acc.contains("text/css") -> "text/css" to ByteArray(0)
+            path.endsWith(".json") || acc.contains("json") -> "application/json" to "{}".toByteArray()
+            path.contains("vast") || path.endsWith(".xml") -> "text/xml" to "<VAST version=\"3.0\"></VAST>".toByteArray()
+            else -> "text/html" to ByteArray(0)
+        }
+        return android.webkit.WebResourceResponse(mime, "utf-8", 200, "OK",
+            mapOf("Access-Control-Allow-Origin" to "*", "Cache-Control" to "no-store"),
+            java.io.ByteArrayInputStream(body))
     }
-  }
-  // links com target=_blank pra propaganda
-  document.addEventListener('click',function(e){
-    var a=e.target&&e.target.closest?e.target.closest('a'):null;
-    if(a&&a.href&&isBad(a.href)){ e.preventDefault(); e.stopPropagation(); bump(); }
-  },true);
-  var t=null;
-  function later(){ if(t) return; t=setTimeout(function(){t=null; try{clean();}catch(e){}},300); }
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',clean); else clean();
-  try{ new MutationObserver(later).observe(document.documentElement,{childList:true,subtree:true}); }catch(e){}
-  setTimeout(clean,1500); setTimeout(clean,4000);
-})();
-""".replace("\${JSON.stringify(CSS_PLACEHOLDER)}", jsString(CSS.trim().replace("\n", "")))
 
-    private fun jsString(s: String) = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+    /** gif transparente de 1 pixel */
+    private val GIF = byteArrayOf(
+        0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80.toByte(), 0x00, 0x00, 0x00, 0x00, 0x00,
+        0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0x21, 0xF9.toByte(), 0x04, 0x01, 0x00, 0x00, 0x00, 0x00,
+        0x2C, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3B,
+    )
+
+    fun jsString(s: String) = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 }
