@@ -1,0 +1,456 @@
+package com.geanalves.transmiplay
+
+import android.content.Context
+import android.media.MediaMetadataRetriever
+import android.net.Uri
+import android.net.wifi.WifiManager
+import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.Looper
+import android.os.SystemClock
+import android.provider.OpenableColumns
+import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.io.OutputStream
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetAddress
+import java.net.NetworkInterface
+import java.net.ServerSocket
+import java.net.Socket
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.concurrent.thread
+
+/**
+ * O "cérebro" do Transmiplay: guarda o relógio mestre, a lista de TVs
+ * conectadas e o que está tocando. As TVs seguem esse relógio.
+ */
+object Hub {
+    data class Item(
+        val kind: String,          // "media" (arquivo/link) ou "youtube"
+        val url: String,           // link, id do YouTube ou caminho local
+        val title: String,
+        val uri: Uri? = null,      // música do celular
+        @Volatile var durMs: Long = 0,
+    )
+
+    lateinit var app: Context
+        private set
+    private val main = Handler(Looper.getMainLooper())
+    private lateinit var worker: Handler
+    @Volatile private var started = false
+
+    val tvs = CopyOnWriteArrayList<TvConn>()
+    val tracks = CopyOnWriteArrayList<Item>()
+    private val audioSinks = CopyOnWriteArrayList<AudioSink>()
+
+    @Volatile var current: Item? = null; private set
+    @Volatile var currentIndex = -1; private set
+    @Volatile var sessionId = 0; private set
+    @Volatile var playing = false; private set
+    @Volatile private var basePos = 0L
+    @Volatile private var baseAt = 0L
+    @Volatile private var endedHandled = false
+    @Volatile var caixinha = false; private set
+    @Volatile var lastError: String? = null
+
+    var listener: (() -> Unit)? = null
+    fun notifyUi() = main.post { listener?.invoke() }
+
+    private var controlServer: ServerSocket? = null
+    private var audioServer: ServerSocket? = null
+    private var http: HttpServer? = null
+    private var discovery: DatagramSocket? = null
+    private var multicastLock: WifiManager.MulticastLock? = null
+
+    fun now(): Long = SystemClock.elapsedRealtime()
+
+    fun position(): Long {
+        val p = if (playing) basePos + (now() - baseAt).coerceAtLeast(0) else basePos
+        val d = current?.durMs ?: 0
+        return if (d > 0) p.coerceAtMost(d) else p
+    }
+
+    // ---------------------------------------------------------------- início
+
+    @Synchronized
+    fun start(ctx: Context) {
+        if (started) return
+        started = true
+        app = ctx.applicationContext
+        val ht = HandlerThread("hub").apply { start() }
+        worker = Handler(ht.looper)
+        loadSavedTracks()
+
+        try {
+            val wm = app.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            multicastLock = wm.createMulticastLock("transmiplay").apply { setReferenceCounted(false); acquire() }
+        } catch (_: Exception) {}
+
+        thread(name = "control", isDaemon = true) { runControlServer() }
+        thread(name = "audio", isDaemon = true) { runAudioServer() }
+        thread(name = "discovery", isDaemon = true) { runDiscovery() }
+        http = HttpServer(Proto.HTTP_PORT).also { it.start() }
+        worker.post(object : Runnable {
+            override fun run() {
+                tick()
+                worker.postDelayed(this, 500)
+            }
+        })
+    }
+
+    fun shutdown() {
+        started = false
+        try { controlServer?.close() } catch (_: Exception) {}
+        try { audioServer?.close() } catch (_: Exception) {}
+        try { discovery?.close() } catch (_: Exception) {}
+        http?.stop()
+        tvs.forEach { it.close() }
+        audioSinks.forEach { it.close() }
+        try { multicastLock?.release() } catch (_: Exception) {}
+    }
+
+    private var tickCount = 0
+    private fun tick() {
+        val cur = current
+        if (cur != null && playing && cur.durMs > 0 && position() >= cur.durMs && now() > baseAt) {
+            if (basePos + (now() - baseAt) > cur.durMs + 400) onEnded(sessionId)
+        }
+        tickCount++
+        if (tickCount % 2 == 0 && cur != null) sendAll(stateMsg())
+    }
+
+    // ---------------------------------------------------------------- descoberta
+
+    private fun runDiscovery() {
+        try {
+            val sock = DatagramSocket().apply { broadcast = true }
+            discovery = sock
+            while (started) {
+                val msg = "TRANSMIPLAY|${deviceName()}|${Proto.CONTROL_PORT}".toByteArray()
+                for (addr in broadcastAddresses()) {
+                    try { sock.send(DatagramPacket(msg, msg.size, addr, Proto.DISCOVERY_PORT)) } catch (_: Exception) {}
+                }
+                Thread.sleep(1000)
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun broadcastAddresses(): List<InetAddress> {
+        val list = mutableListOf<InetAddress>()
+        try { list += InetAddress.getByName("255.255.255.255") } catch (_: Exception) {}
+        try {
+            for (ni in NetworkInterface.getNetworkInterfaces()) {
+                if (!ni.isUp || ni.isLoopback) continue
+                for (ia in ni.interfaceAddresses) ia.broadcast?.let { if (it !in list) list += it }
+            }
+        } catch (_: Exception) {}
+        return list
+    }
+
+    fun deviceName(): String {
+        return try {
+            android.provider.Settings.Global.getString(app.contentResolver, "device_name")
+        } catch (_: Exception) { null } ?: "${Build.MANUFACTURER} ${Build.MODEL}"
+    }
+
+    // ---------------------------------------------------------------- comandos com as TVs
+
+    private fun runControlServer() {
+        try {
+            val ss = ServerSocket(Proto.CONTROL_PORT).apply { reuseAddress = true }
+            controlServer = ss
+            while (started) {
+                val s = ss.accept()
+                s.tcpNoDelay = true
+                val tv = TvConn(s)
+                tvs += tv
+                thread(name = "tv-read", isDaemon = true) { tv.readLoop() }
+            }
+        } catch (e: Exception) {
+            if (started) { lastError = "Porta ocupada: ${e.message}"; notifyUi() }
+        }
+    }
+
+    class TvConn(private val socket: Socket) {
+        @Volatile var name: String = socket.inetAddress.hostAddress ?: "TV"
+        @Volatile var adj: Int = 0
+        private val out: OutputStream = socket.getOutputStream()
+
+        fun send(j: JSONObject) {
+            val bytes = (j.toString() + "\n").toByteArray()
+            try { synchronized(out) { out.write(bytes); out.flush() } } catch (_: Exception) { close() }
+        }
+
+        fun close() {
+            try { socket.close() } catch (_: Exception) {}
+            if (tvs.remove(this)) notifyUi()
+        }
+
+        fun readLoop() {
+            try {
+                val r = BufferedReader(InputStreamReader(socket.getInputStream()))
+                while (true) {
+                    val line = r.readLine() ?: break
+                    val j = try { JSONObject(line) } catch (_: Exception) { continue }
+                    when (j.optString("t")) {
+                        "ping" -> send(JSONObject().put("t", "pong").put("c", j.optLong("c")).put("s", now()))
+                        "hello" -> {
+                            name = j.optString("name", name)
+                            adj = prefs().getInt("adj_$name", 0)
+                            send(JSONObject().put("t", "adj").put("ms", adj))
+                            current?.let { send(loadMsg(it)); send(stateMsg()) }
+                            if (caixinha) send(audioMsg(true))
+                            notifyUi()
+                        }
+                        "info" -> onInfo(j.optInt("id"), j.optLong("dur"))
+                        "ended" -> onEnded(j.optInt("id"))
+                        "error" -> { lastError = "$name: ${j.optString("msg")}"; notifyUi() }
+                    }
+                }
+            } catch (_: Exception) {}
+            close()
+        }
+
+        fun changeAdj(delta: Int) {
+            adj = (adj + delta).coerceIn(-1000, 1000)
+            prefs().edit().putInt("adj_$name", adj).apply()
+            send(JSONObject().put("t", "adj").put("ms", adj))
+            notifyUi()
+        }
+    }
+
+    private fun prefs() = app.getSharedPreferences("transmiplay", Context.MODE_PRIVATE)
+
+    private fun sendAll(j: JSONObject) = tvs.forEach { it.send(j) }
+
+    private fun loadMsg(it: Item): JSONObject {
+        val j = JSONObject().put("t", "load").put("id", sessionId).put("kind", it.kind).put("title", it.title)
+        if (it.uri != null) j.put("local", true).put("url", "/m/$currentIndex?s=$sessionId")
+        else j.put("local", false).put("url", it.url)
+        return j
+    }
+
+    private fun stateMsg() = JSONObject().put("t", "state").put("id", sessionId)
+        .put("playing", playing).put("pos", basePos).put("at", baseAt)
+
+    private fun audioMsg(on: Boolean) = JSONObject().put("t", "audio").put("on", on).put("delay", Proto.AUDIO_DELAY_MS)
+
+    // ---------------------------------------------------------------- tocar
+
+    private fun runOnWorker(r: () -> Unit) = worker.post(r)
+
+    fun playLink(raw: String) = runOnWorker {
+        val url = raw.trim()
+        val yt = youtubeId(url)
+        val item = if (yt != null) Item("youtube", yt, "YouTube")
+        else Item("media", url, Uri.parse(url).lastPathSegment?.take(60) ?: url)
+        load(item, -1)
+    }
+
+    fun playTrack(index: Int) = runOnWorker {
+        val t = tracks.getOrNull(index) ?: return@runOnWorker
+        load(t, index)
+        if (t.durMs == 0L && t.uri != null) thread(isDaemon = true) {
+            try {
+                val mmr = MediaMetadataRetriever()
+                mmr.setDataSource(app, t.uri)
+                t.durMs = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0
+                mmr.release()
+                notifyUi()
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun load(item: Item, index: Int) {
+        if (caixinha) CaptureService.stop(app)
+        sessionId++
+        val sid = sessionId
+        current = item
+        currentIndex = index
+        playing = false
+        basePos = 0
+        baseAt = now()
+        endedHandled = false
+        sendAll(loadMsg(item))
+        sendAll(stateMsg())
+        notifyUi()
+        // dá um tempinho pras TVs carregarem e começa todo mundo junto
+        worker.postDelayed({ if (sessionId == sid) doPlay() }, 1200)
+    }
+
+    fun togglePlay() = runOnWorker { if (playing) doPause() else doPlay() }
+
+    private fun doPlay() {
+        val cur = current ?: return
+        var p = position()
+        if (cur.durMs > 0 && p >= cur.durMs - 500) p = 0
+        basePos = p
+        baseAt = now() + Proto.START_LEAD_MS
+        playing = true
+        endedHandled = false
+        sendAll(stateMsg())
+        notifyUi()
+    }
+
+    private fun doPause() {
+        basePos = position()
+        playing = false
+        baseAt = now()
+        sendAll(stateMsg())
+        notifyUi()
+    }
+
+    fun seek(ms: Long) = runOnWorker {
+        if (current == null) return@runOnWorker
+        basePos = ms.coerceAtLeast(0)
+        baseAt = if (playing) now() + Proto.START_LEAD_MS else now()
+        endedHandled = false
+        sendAll(stateMsg())
+        notifyUi()
+    }
+
+    fun next() = runOnWorker {
+        if (currentIndex >= 0 && currentIndex + 1 < tracks.size) playTrack(currentIndex + 1)
+    }
+
+    fun prev() = runOnWorker {
+        if (position() > 3000 || currentIndex <= 0) seek(0) else playTrack(currentIndex - 1)
+    }
+
+    fun stopAll() = runOnWorker {
+        current = null
+        currentIndex = -1
+        playing = false
+        sessionId++
+        sendAll(JSONObject().put("t", "stop"))
+        notifyUi()
+    }
+
+    private fun onInfo(id: Int, dur: Long) {
+        val cur = current ?: return
+        if (id == sessionId && dur > 0 && cur.durMs == 0L) { cur.durMs = dur; notifyUi() }
+    }
+
+    private fun onEnded(id: Int) = runOnWorker {
+        if (id != sessionId || endedHandled || !playing) return@runOnWorker
+        endedHandled = true
+        if (currentIndex >= 0 && currentIndex + 1 < tracks.size) playTrack(currentIndex + 1)
+        else {
+            basePos = current?.durMs ?: position()
+            playing = false
+            sendAll(stateMsg())
+            notifyUi()
+        }
+    }
+
+    // ---------------------------------------------------------------- minhas músicas
+
+    fun addTracks(uris: List<Uri>) = runOnWorker {
+        val firstNew = tracks.size
+        for (u in uris) {
+            if (tracks.any { it.uri == u }) continue
+            tracks += Item("media", u.toString(), displayName(u), u)
+        }
+        saveTracks()
+        notifyUi()
+        if (current == null && tracks.size > firstNew) playTrack(firstNew)
+    }
+
+    fun removeTrack(index: Int) = runOnWorker {
+        if (index !in tracks.indices) return@runOnWorker
+        if (index == currentIndex) stopAll()
+        tracks.removeAt(index)
+        if (currentIndex > index) currentIndex--
+        saveTracks()
+        notifyUi()
+    }
+
+    private fun displayName(u: Uri): String {
+        try {
+            app.contentResolver.query(u, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                if (it.moveToFirst()) return it.getString(0).substringBeforeLast('.')
+            }
+        } catch (_: Exception) {}
+        return u.lastPathSegment ?: "Música"
+    }
+
+    private fun saveTracks() {
+        prefs().edit().putString("tracks", tracks.mapNotNull { it.uri?.toString() }.joinToString("\n")).apply()
+    }
+
+    private fun loadSavedTracks() {
+        val saved = prefs().getString("tracks", "") ?: ""
+        val perms = app.contentResolver.persistedUriPermissions.map { it.uri.toString() }.toSet()
+        for (s in saved.split("\n")) {
+            if (s.isBlank() || s !in perms) continue
+            val u = Uri.parse(s)
+            tracks += Item("media", s, displayName(u), u)
+        }
+    }
+
+    // ---------------------------------------------------------------- caixinha (som ao vivo)
+
+    fun setCaixinha(on: Boolean) = runOnWorker {
+        if (on == caixinha) return@runOnWorker
+        caixinha = on
+        if (on && current != null) {
+            current = null; currentIndex = -1; playing = false; sessionId++
+            sendAll(JSONObject().put("t", "stop"))
+        }
+        sendAll(audioMsg(on))
+        if (!on) audioSinks.forEach { it.close() }
+        notifyUi()
+    }
+
+    fun pushAudio(packet: ByteArray) {
+        for (s in audioSinks) s.offer(packet)
+    }
+
+    private fun runAudioServer() {
+        try {
+            val ss = ServerSocket(Proto.AUDIO_PORT).apply { reuseAddress = true }
+            audioServer = ss
+            while (started) {
+                val s = ss.accept()
+                s.tcpNoDelay = true
+                s.sendBufferSize = 64 * 1024
+                audioSinks += AudioSink(s)
+            }
+        } catch (_: Exception) {}
+    }
+
+    class AudioSink(private val socket: Socket) {
+        private val q = ArrayBlockingQueue<ByteArray>(60)
+        init {
+            thread(name = "audio-out", isDaemon = true) {
+                try {
+                    val out = socket.getOutputStream()
+                    while (true) out.write(q.take())
+                } catch (_: Exception) {}
+                close()
+            }
+        }
+        fun offer(p: ByteArray) { if (!q.offer(p)) { q.poll(); q.offer(p) } }
+        fun close() {
+            try { socket.close() } catch (_: Exception) {}
+            audioSinks.remove(this)
+        }
+    }
+
+    // ---------------------------------------------------------------- utilidades
+
+    fun youtubeId(url: String): String? {
+        val patterns = listOf(
+            Regex("""youtu\.be/([A-Za-z0-9_-]{11})"""),
+            Regex("""[?&]v=([A-Za-z0-9_-]{11})"""),
+            Regex("""youtube\.com/(?:shorts|live|embed)/([A-Za-z0-9_-]{11})"""),
+        )
+        if (!url.contains("youtu")) return null
+        for (p in patterns) p.find(url)?.let { return it.groupValues[1] }
+        return null
+    }
+}
