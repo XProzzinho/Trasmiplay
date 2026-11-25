@@ -57,13 +57,13 @@ import java.util.concurrent.Executors
 class BrowserActivity : Activity() {
 
     // ------------------------------------------------------------------ cores
-    private val bg = Color.parseColor("#121212")
-    private val bar = Color.parseColor("#1E1E1E")
-    private val field = Color.parseColor("#2C2C2C")
-    private val line = Color.parseColor("#2A2A2A")
-    private val soft = Color.parseColor("#A0A0A0")
-    private val blue = Color.parseColor("#2F80FF")
-    private val green = Color.parseColor("#3DBE5A")
+    private val bg = Color.parseColor("#0B0A24")
+    private val bar = Neon.bgTop
+    private val field = Color.parseColor("#241D5E")
+    private val line = Neon.stroke
+    private val soft = Neon.soft
+    private val blue = Neon.purple2
+    private val green = Neon.green
     private val yellow = Color.parseColor("#F4C20D")
 
     // ------------------------------------------------------------------ dados
@@ -214,7 +214,7 @@ class BrowserActivity : Activity() {
         }
 
     private fun buildUi(): View {
-        root = FrameLayout(this).apply { setBackgroundColor(bg) }
+        root = FrameLayout(this).apply { background = Neon.background() }
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(col, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
 
@@ -301,7 +301,7 @@ class BrowserActivity : Activity() {
         // ---- "deseja abrir novamente"
         restoreBar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#3A3A3A"))
+            setBackgroundColor(Neon.cardHi)
             setPadding(dp(12), dp(12), dp(12), dp(4))
             visibility = View.GONE
         }
@@ -331,10 +331,10 @@ class BrowserActivity : Activity() {
         mini = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.parseColor("#1B2740"))
+            setBackgroundColor(Color.parseColor("#2A1F6E"))
             setPadding(dp(10), dp(4), dp(4), dp(4))
             visibility = View.GONE
-            setOnClickListener { startActivity(Intent(this@BrowserActivity, MainActivity::class.java)) }
+            setOnClickListener { startActivity(Intent(this@BrowserActivity, MainActivity::class.java).putExtra(MainActivity.EXTRA_CONTROL, true)) }
         }
         mini.addView(icon(R.drawable.ic_cast, blue, 8), LinearLayout.LayoutParams(dp(36), dp(36)))
         val miniCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(6), 0, 0, 0) }
@@ -360,7 +360,8 @@ class BrowserActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(24), dp(14), dp(24))
         }
-        c.addView(text("Bem-vindo ao Transmiplay", 20f, Color.WHITE, true).apply { gravity = Gravity.CENTER },
+        c.addView(ImageView(this).apply { setImageResource(R.drawable.logo) }, LinearLayout.LayoutParams(dp(72), dp(72)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(10) })
+        c.addView(Neon.brand(this, "Bem-vindo ao Transmi", "play", 20f).apply { gravity = Gravity.CENTER },
             LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         c.addView(text("Abra um site, dê play no vídeo e toque no botão amarelo ▶ lá em cima pra mandar pras TVs.", 14f, soft).apply {
             gravity = Gravity.CENTER; setPadding(dp(8), dp(6), dp(8), dp(18))
@@ -368,7 +369,7 @@ class BrowserActivity : Activity() {
 
         val cardBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = rounded(Color.parseColor("#1A1A1A"), 6)
+            background = Neon.cardBg(this@BrowserActivity, Neon.card, 14)
             setPadding(dp(4), dp(4), dp(4), dp(8))
         }
         val tabsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
@@ -561,7 +562,7 @@ class BrowserActivity : Activity() {
 
     private fun makeWebView(t: Tab): WebView {
         val w = WebView(this)
-        w.setBackgroundColor(bg)
+        w.setBackgroundColor(Color.WHITE)
         w.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -998,7 +999,7 @@ class BrowserActivity : Activity() {
         val c = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val head = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#3A3A3A"))
+            setBackgroundColor(Neon.cardHi)
             setPadding(dp(20), dp(18), dp(20), dp(14))
         }
         head.addView(text("Selecione o dispositivo para transmitir para", 18f))
@@ -1229,12 +1230,13 @@ class BrowserActivity : Activity() {
         }
         drawerPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#1C1C1C"))
+            setBackgroundColor(Color.parseColor("#120E3A"))
             isClickable = true
             setPadding(0, dp(18), 0, dp(12))
         }
         val head = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), 0, dp(20), dp(14)) }
-        head.addView(text("Transmiplay", 17f, Color.WHITE, true))
+        head.addView(ImageView(this).apply { setImageResource(R.drawable.logo) }, LinearLayout.LayoutParams(dp(54), dp(54)))
+        head.addView(Neon.brand(this, "Transmi", "play", 19f).apply { setPadding(0, dp(8), 0, 0) })
         val ver = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (_: Exception) { "" }
         head.addView(text("v$ver", 12f, soft))
         drawerPanel.addView(head)
@@ -1242,7 +1244,7 @@ class BrowserActivity : Activity() {
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = rounded(Color.parseColor("#2E2E2E"), 30)
+            background = Neon.cardBg(this@BrowserActivity, Neon.cardHi, 30, Neon.purple2, 1)
             setPadding(dp(14), dp(4), dp(14), dp(4))
             setOnClickListener { closeDrawer(); if (tab.isHome) fillHome() }
         }
@@ -1278,7 +1280,7 @@ class BrowserActivity : Activity() {
         entry(R.drawable.ic_tv, "TVs e ajuste de atraso") { openMain(-1) }
         entry(R.drawable.ic_settings, "Configurações") { showSettings() }
 
-        val scroll = ScrollView(this).apply { addView(drawerPanel); setBackgroundColor(Color.parseColor("#1C1C1C")) }
+        val scroll = ScrollView(this).apply { addView(drawerPanel); setBackgroundColor(Color.parseColor("#120E3A")) }
         d.addView(scroll, FrameLayout.LayoutParams((resources.displayMetrics.widthPixels * 0.8f).toInt(), MATCH_PARENT))
         return d
     }

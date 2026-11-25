@@ -11,8 +11,10 @@ android {
         applicationId = "com.geanalves.transmiplay"
         minSdk = 24
         targetSdk = 34
-        versionCode = 2
-        versionName = "2.0"
+        // o GitHub Actions passa o número do build: cada build novo é uma versão maior
+        val build = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
+        versionCode = build
+        versionName = "1.$build"
     }
 
     signingConfigs {
@@ -43,9 +45,14 @@ android {
         checkReleaseBuilds = false
         abortOnError = false
     }
-    testOptions { unitTests.isReturnDefaultValues = true }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all { it.systemProperty("shots", System.getProperty("shots") ?: "") }
+    }
 }
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }

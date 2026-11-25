@@ -68,6 +68,17 @@ object Hub {
     /** arquivo de legenda do celular servido em /sub */
     @Volatile var subUri: Uri? = null
 
+    /** 0 automática, 1 alta (Full HD), 2 economia */
+    val quality: Int get() = prefs().getInt("quality", 0)
+    val autoSync: Boolean get() = prefs().getBoolean("auto_sync", true)
+
+    fun setQuality(q: Int) { prefs().edit().putInt("quality", q).apply(); sendAll(cfgMsg()) }
+    fun setAutoSync(on: Boolean) { prefs().edit().putBoolean("auto_sync", on).apply(); sendAll(cfgMsg()) }
+    private fun cfgMsg() = JSONObject().put("t", "cfg").put("quality", quality).put("sync", autoSync)
+
+    fun skip(deltaMs: Long) = seek((position() + deltaMs).coerceAtLeast(0))
+    val activeTvs: Int get() = tvs.count { it.enabled }
+
     var listener: (() -> Unit)? = null
     fun notifyUi() = main.post { listener?.invoke() }
 
@@ -215,6 +226,7 @@ object Hub {
                             adj = prefs().getInt("adj_$name", 0)
                             enabled = prefs().getBoolean("on_$name", true)
                             send(JSONObject().put("t", "adj").put("ms", adj))
+                            send(cfgMsg())
                             if (enabled) {
                                 current?.let { send(loadMsg(it)); send(stateMsg()) }
                                 if (caixinha) send(audioMsg(true))
