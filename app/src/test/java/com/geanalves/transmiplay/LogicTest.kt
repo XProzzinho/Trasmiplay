@@ -35,4 +35,12 @@ class LogicTest {
         assertEquals("TAcKp8BI2Ns", Hub.youtubeId("https://www.youtube.com/shorts/TAcKp8BI2Ns"))
         assertNull(Hub.youtubeId("https://site.com/watch?v=Oa3QsDdYc20"))
     }
+
+    @Test fun adUrls() {
+        assertTrue(looksLikeAdUrl("https://cdn.site.com/ads/preroll-15s.mp4"))
+        assertTrue(looksLikeAdUrl("https://imasdk.googleapis.com/js/sdkloader/vast.mp4"))
+        assertTrue(looksLikeAdUrl("https://x.com/v/vast.xml?id=2"))
+        assertEquals(false, looksLikeAdUrl("https://cdn.site.com/hls/movie/master.m3u8"))
+        assertEquals(false, looksLikeAdUrl("https://videos.site.com/2024/filme-1080p.mp4"))
+    }
 }

@@ -53,6 +53,18 @@ import java.util.concurrent.Executors
  * Navegador do Transmiplay: abre qualquer site, percebe os vídeos que a página toca
  * e manda pras TVs com o Simulplay.
  */
+/** endereços que costumam ser de vídeo de propaganda */
+fun looksLikeAdUrl(url: String): Boolean {
+    val u = url.lowercase()
+    val host = try { java.net.URL(u).host } catch (_: Exception) { "" }
+    if (BrowserActivity.AD_HOSTS.any { host == it || host.endsWith(".$it") }) return true
+    val path = u.substringAfter(host)
+    return listOf(
+        "/ads/", "/ad/", "/adv/", "/advert", "preroll", "pre-roll", "midroll", "/vast", "vast.xml", "vast=",
+        "/vpaid", "ima3", "adserver", "adtag", "/creative", "/promo/", "commercial", "sponsor",
+    ).any { path.contains(it) }
+}
+
 @SuppressLint("SetJavaScriptEnabled")
 class BrowserActivity : Activity() {
 
@@ -76,9 +88,22 @@ class BrowserActivity : Activity() {
         @Volatile var w: Int = 0,
         @Volatile var h: Int = 0,
         val ytId: String? = null,
+        @Volatile var durSec: Double = 0.0,   // duração vista no <video> da página
     ) {
         val fileName: String
             get() = ytId ?: (Uri.parse(url).lastPathSegment?.substringBeforeLast('.')?.takeIf { it.isNotBlank() } ?: "vídeo")
+
+        /** parece propaganda? (endereço de anúncio ou vídeo bem curtinho) */
+        val adLike: Boolean
+            get() = ytId == null && (looksLikeAdUrl(url) || durSec in 0.5..90.0)
+
+        /** nota pra escolher o vídeo principal: maior = melhor */
+        val score: Double
+            get() = when {
+                ytId != null -> 1e9
+                adLike -> -1.0
+                else -> durSec + (if (type == "m3u8" || type == "mpd") 30.0 else 0.0) + (if (w >= 1280) 10.0 else 0.0)
+            }
     }
 
     data class SubFound(val url: String, val mime: String)
@@ -708,15 +733,17 @@ class BrowserActivity : Activity() {
         if (!t.subs.containsKey(url)) t.subs[url] = SubFound(url, mime)
     }
 
-    private fun addVideo(t: Tab, url: String, type: String, w: Int = 0, h: Int = 0) = ui.post {
+    private fun addVideo(t: Tab, url: String, type: String, w: Int = 0, h: Int = 0, dur: Double = 0.0) = ui.post {
         val existing = t.videos[url]
         if (existing != null) {
             if (w > 0) { existing.w = w; existing.h = h }
+            if (dur > 0 && dur.isFinite()) existing.durSec = dur
             return@post
         }
         if (t.videos.size >= 40) return@post
         // m3u8 de pedaços (ts) de uma lista que já temos não interessa
-        t.videos[url] = Video(url, type, t.pageUrl, t.title.ifBlank { WebStore.host(t.pageUrl) }, t.ogImage, w, h)
+        t.videos[url] = Video(url, type, t.pageUrl, t.title.ifBlank { WebStore.host(t.pageUrl) }, t.ogImage, w, h,
+            durSec = if (dur.isFinite() && dur > 0) dur else 0.0)
         if (t == tab) { updateFound(pulse = true) }
         videoList?.let { if (t == tab) renderVideoList() }
     }
@@ -737,7 +764,7 @@ class BrowserActivity : Activity() {
 
     inner class PageBridge(private val t: Tab) {
         @JavascriptInterface
-        fun found(src: String, title: String, og: String, w: Int, h: Int) {
+        fun found(src: String, title: String, og: String, w: Int, h: Int, dur: Double) {
             if (og.isNotBlank()) t.ogImage = og
             if (!src.startsWith("http")) return
             if (src.contains("googlevideo.com")) return
@@ -750,7 +777,7 @@ class BrowserActivity : Activity() {
                 else -> "mp4"
             }
             if (title.isNotBlank() && t.title.isBlank()) t.title = title
-            addVideo(t, src, type, w, h)
+            addVideo(t, src, type, w, h, dur)
         }
 
         @JavascriptInterface
@@ -762,8 +789,13 @@ class BrowserActivity : Activity() {
         }
     }
 
+    private fun fmtDur(sec: Double): String {
+        val s = sec.toLong()
+        return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, (s / 60) % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
+    }
+
     private fun updateFound(pulse: Boolean = false) {
-        val n = tab.videos.size
+        val n = tab.videos.values.count { !it.adLike }.takeIf { it > 0 } ?: tab.videos.size
         foundBtn.visibility = if (n > 0) View.VISIBLE else View.GONE
         foundCount.text = if (n > 9) "9+" else n.toString()
         foundCount.visibility = if (n > 1) View.VISIBLE else View.GONE
@@ -850,7 +882,10 @@ class BrowserActivity : Activity() {
     private fun renderVideoList() {
         val box = listBox ?: return
         box.removeAllViews()
-        val list = tab.videos.values.reversed()
+        // vídeo principal primeiro; o que parece propaganda vai pro fim
+        val list = tab.videos.values.reversed().sortedWith(
+            compareBy<Video> { it.adLike }.thenByDescending { it.score },
+        )
         if (list.isEmpty()) {
             box.addView(text("Nenhum vídeo achado nessa página ainda. Dê play no vídeo do site e volte aqui.", 14f, soft).apply {
                 setPadding(dp(8), dp(24), dp(8), 0)
@@ -878,12 +913,17 @@ class BrowserActivity : Activity() {
         col.addView(text(v.fileName, 13f, soft).apply {
             maxLines = 1; ellipsize = TextUtils.TruncateAt.MIDDLE; setPadding(0, dp(10), 0, dp(2))
         })
+        val durLabel = if (v.durSec >= 1) " · " + fmtDur(v.durSec) else ""
         val typeLabel = when {
             v.ytId != null -> "YouTube (sincronizado)"
             v.w > 0 -> "${v.type} (${v.w}x${v.h})"
             else -> v.type
         }
-        col.addView(text(typeLabel, 11f, green))
+        col.addView(text(
+            if (v.adLike) "Propaganda (provável) · $typeLabel$durLabel" else "$typeLabel$durLabel",
+            11f, if (v.adLike) Color.parseColor("#FF8A80") else green,
+        ))
+        if (v.adLike) row.alpha = 0.55f
         row.addView(col, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         val dots = icon(R.drawable.ic_more, soft, 10)
         dots.setOnClickListener {
@@ -1344,7 +1384,7 @@ class BrowserActivity : Activity() {
         var v=els[i]; var s=v.currentSrc||v.src||'';
         var vid=v.tagName==='SOURCE'?v.parentElement:v;
         if(s&&s.indexOf('blob:')!==0&&s.indexOf('data:')!==0)
-          TP.found(s,document.title||'',og(),(vid&&vid.videoWidth)||0,(vid&&vid.videoHeight)||0);
+          TP.found(s,document.title||'',og(),(vid&&vid.videoWidth)||0,(vid&&vid.videoHeight)||0,(vid&&isFinite(vid.duration)&&vid.duration)||0);
       }
     }catch(e){}
   }
@@ -1365,6 +1405,9 @@ class BrowserActivity : Activity() {
             "hilltopads.net", "adcash.com", "clickadu.com", "mgid.com", "taboola.com", "outbrain.com",
             "a-ads.com", "monetag.com", "highperformanceformat.com", "profitablegatecpm.com",
             "realsrv.com", "pemsrv.com", "tsyndicate.com", "dtscout.com", "adnxs.com", "zeydoo.com",
+            "imasdk.googleapis.com", "spotxchange.com", "springserve.com", "vidoomy.com", "aniview.com",
+            "teads.tv", "connatix.com", "primis.tech", "unrulymedia.com", "smartadserver.com", "adform.net",
+            "pubmatic.com", "rubiconproject.com", "openx.net", "criteo.com", "a-mo.net", "adsrvr.org",
         )
     }
 }
