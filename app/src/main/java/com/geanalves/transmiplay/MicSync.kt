@@ -58,12 +58,12 @@ object MicSync {
     @Volatile var running = false; private set
 
     @SuppressLint("MissingPermission")
-    fun run(tvs: List<Hub.TvConn>, rounds: Int = 3, progress: (String) -> Unit, done: (Map<Hub.TvConn, Double?>) -> Unit) {
+    fun run(tvs: List<Hub.Syncable>, rounds: Int = 3, progress: (String) -> Unit, done: (Map<Hub.Syncable, Double?>) -> Unit) {
         if (running || tvs.isEmpty()) return
         running = true
         val list = tvs.take(FREQS.size)
         thread(name = "mic-sync", isDaemon = true) {
-            val results = HashMap<Hub.TvConn, MutableList<Double>>()
+            val results = HashMap<Hub.Syncable, MutableList<Double>>()
             try {
                 for (r in 1..rounds) {
                     main.post { progress("Escutando… rodada $r de $rounds") }
@@ -75,9 +75,7 @@ object MicSync {
                     rec.startRecording()
                     // o apito sai daqui a 0,7 s (tempo de todo mundo se preparar)
                     val target = Hub.now() + 700
-                    list.forEachIndexed { i, tv ->
-                        tv.send(JSONObject().put("t", "beep").put("at", target).put("freq", FREQS[i]).put("ms", 120))
-                    }
+                    list.forEachIndexed { i, tv -> tv.beep(target, FREQS[i]) }
                     var got = 0
                     while (got < total) {
                         val n = rec.read(buf, got, total - got)
@@ -110,15 +108,17 @@ object MicSync {
     }
 
     /** alinha todo mundo pela TV que soou mais cedo */
-    private fun apply(med: Map<Hub.TvConn, Double?>) {
+    private fun apply(med: Map<Hub.Syncable, Double?>) {
         for ((tv, e) in med) if (e != null) measured[tv.name] = e
-        val active = Hub.tvs.filter { measured.containsKey(it.name) }
+        val all: List<Hub.Syncable> = Hub.tvs.toList<Hub.Syncable>() + listOfNotNull(PhoneSpeaker.takeIf { it.enabled })
+        val active = all.filter { measured.containsKey(it.name) }
         if (active.size < 2) return // com uma só ainda não dá pra comparar: espera medir outra
-        val ref = active.minOf { measured[it.name]!! }
+        // com o celular junto, ele é a referência (o som dele não dá pra atrasar no modo caixinha)
+        val ref = if (active.contains(PhoneSpeaker)) measured[PhoneSpeaker.name]!! else active.minOf { measured[it.name]!! }
         for (tv in active) {
             val late = measured[tv.name]!! - ref
             val step = (-late).toInt()
-            if (kotlin.math.abs(step) >= 4) tv.changeAdj(step)
+            if (kotlin.math.abs(step) >= 4 && tv !== PhoneSpeaker) tv.changeAdj(step)
             measured[tv.name] = ref
         }
     }

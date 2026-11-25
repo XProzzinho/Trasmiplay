@@ -500,7 +500,10 @@ class MainActivity : Activity() {
         orbit = OrbitView(this).apply {
             contentDescription = "Controle da transmissão: toque no meio para tocar ou pausar, arraste o anel para avançar"
             onToggle = { Hub.togglePlay() }
-            onTv = { i -> Hub.tvs.getOrNull(i)?.let { it.setOn(!it.enabled) } }
+            onTv = { i ->
+                val tv = Hub.tvs.getOrNull(i)
+                if (tv != null) tv.setOn(!tv.enabled) else PhoneSpeaker.setEnabled(!PhoneSpeaker.enabled)
+            }
             onSeek = { p -> Hub.current?.durMs?.takeIf { it > 0 }?.let { Hub.seek((it * p).toLong()) } }
         }
         ctrlActive.addView(orbit, LinearLayout.LayoutParams(MATCH_PARENT, d(390)).apply { topMargin = d(8) })
@@ -720,10 +723,12 @@ class MainActivity : Activity() {
                 background = Neon.cardBg(this@MainActivity); setPadding(d(14), d(16), d(14), d(16))
             }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         }
+        tvList.addView(phoneRow(), 0)
         for (tv in Hub.tvs) tvList.addView(tvRow(tv))
         val n = Hub.activeTvs
         selectedText.text = android.text.SpannableStringBuilder().apply {
             append(if (n == 1) "1 televisão selecionada" else "$n televisões selecionadas")
+            if (PhoneSpeaker.enabled) append(" + este celular")
             append("\n")
             val start = length
             append(if (n > 0) "Prontas para transmitir!" else "Marque as TVs acima")
@@ -760,7 +765,7 @@ class MainActivity : Activity() {
         ctrlEmpty.visibility = if (active) View.GONE else View.VISIBLE
         ctrlActive.visibility = if (active) View.VISIBLE else View.GONE
         tvCountText.text = if (n == 1) "1 TV" else "$n TVs"
-        orbit.tvs = Hub.tvs.map { OrbitView.Tv(it.name, it.enabled) }
+        orbit.tvs = Hub.tvs.map { OrbitView.Tv(it.name, it.enabled) } + OrbitView.Tv("Celular", PhoneSpeaker.enabled)
         orbit.playing = Hub.playing || (Hub.caixinha && cur == null)
         orbit.speaker = Hub.caixinha && cur == null
         orbit.seekable = cur != null
@@ -800,6 +805,41 @@ class MainActivity : Activity() {
             if (speakerDlg?.isOpen != true) toast("${it.name}: ${it.btMsg}")
         }
         updateProgress()
+    }
+
+    /** "Este celular": toca junto na caixa Bluetooth ligada no celular */
+    private fun phoneRow(): View {
+        val r = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            background = Neon.cardBg(this@MainActivity, if (PhoneSpeaker.enabled) Neon.cardHi else Neon.card, 18,
+                if (PhoneSpeaker.enabled) Neon.purple else Neon.stroke, 1)
+            setPadding(d(10), d(10), d(14), d(10))
+        }
+        val badge = FrameLayout(this).apply {
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.parseColor("#22D3EE"), Color.parseColor("#0891B2"))).apply { cornerRadius = d(8).toFloat() }
+        }
+        badge.addView(Neon.icon(this, R.drawable.ic_speaker, Color.WHITE, 8), FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        r.addView(badge, LinearLayout.LayoutParams(d(64), d(42)))
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(d(14), 0, d(6), 0) }
+        col.addView(t("Este celular", 16f, Neon.white, true))
+        val out = PhoneSpeaker.outputName()
+        val sub = when {
+            !PhoneSpeaker.enabled -> "Toque junto na caixa ligada no celular"
+            PhoneSpeaker.lastNote.isNotBlank() && Hub.current?.kind == "youtube" -> PhoneSpeaker.lastNote
+            out != null -> "caixa: $out"
+            else -> "alto-falante do celular"
+        }
+        col.addView(t(sub, 12f, if (PhoneSpeaker.enabled) Color.parseColor("#0E7490") else Neon.soft).apply {
+            maxLines = 2; ellipsize = TextUtils.TruncateAt.END
+        })
+        r.addView(col, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        r.addView(Neon.icon(this, R.drawable.ic_settings, Neon.purple, 9) {
+            try { startActivity(Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS)) } catch (_: Exception) {}
+        }.apply { contentDescription = "Bluetooth do celular" }, LinearLayout.LayoutParams(d(42), d(42)).apply { marginEnd = d(6) })
+        r.addView(Neon.Toggle(this, PhoneSpeaker.enabled) { PhoneSpeaker.setEnabled(it) }, LinearLayout.LayoutParams(d(46), d(26)))
+        r.layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = d(8) }
+        return r
     }
 
     private fun tvRow(tv: Hub.TvConn): View {
@@ -951,12 +991,12 @@ class MainActivity : Activity() {
         body.addView(t("Todas de uma vez", 15f, Neon.white, true), lp(16))
         body.addView(t("Fique no meio, mais ou menos na mesma distância de cada TV ou caixa, com o celular parado.", 13f, Neon.soft), lp(2))
         body.addView(Neon.bigButton(this, if (MicSync.running) "Escutando…" else "Sincronizar todas", R.drawable.ic_wifi) {
-            if (!MicSync.running) startMic(Hub.tvs.toList())
+            if (!MicSync.running) startMic(syncables())
         }, lp(10))
 
         body.addView(t("Uma por vez", 15f, Neon.white, true), lp(18))
         body.addView(t("Chegue pertinho de uma TV (ou da caixa dela) e toque em Medir. Depois vá na próxima.", 13f, Neon.soft), lp(2))
-        for (tv in Hub.tvs) {
+        for (tv in syncables()) {
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
                 background = Neon.cardBg(this@MainActivity, Color.WHITE, 14, Neon.stroke, 1)
@@ -984,7 +1024,11 @@ class MainActivity : Activity() {
         })
     }
 
-    private fun startMic(list: List<Hub.TvConn>) {
+    /** TVs + o celular (quando ele está tocando junto) */
+    private fun syncables(): List<Hub.Syncable> =
+        Hub.tvs.toList<Hub.Syncable>() + listOfNotNull(PhoneSpeaker.takeIf { it.enabled })
+
+    private fun startMic(list: List<Hub.Syncable>) {
         if (Hub.playing) Hub.togglePlay() // pausa pra música não atrapalhar
         micStatus = "Prepare-se… as TVs vão apitar"
         renderMic()
@@ -1003,7 +1047,7 @@ class MainActivity : Activity() {
                 }
             }
             // as outras TVs também podem ter sido corrigidas (alinhadas com a nova)
-            for (tv in Hub.tvs) if (tv !in res.keys && MicSync.measured.containsKey(tv.name)) micResult[tv.name] = "ajuste: ${tv.adj} ms"
+            for (tv in syncables()) if (tv !in res.keys && MicSync.measured.containsKey(tv.name)) micResult[tv.name] = "ajuste: ${tv.adj} ms"
             micStatus = when {
                 heard == 0 -> "Não ouvi nenhum apito. Aumente o volume das TVs e tente de novo."
                 MicSync.measured.size < 2 -> "Pronto! Agora meça outra TV."
@@ -1016,8 +1060,8 @@ class MainActivity : Activity() {
 
     // ================================================================== atraso das TVs
 
-    private fun adjustDialog(only: Hub.TvConn? = null) {
-        val list = only?.let { listOf(it) } ?: Hub.tvs.toList()
+    private fun adjustDialog(only: Hub.Syncable? = null) {
+        val list = only?.let { listOf(it) } ?: syncables()
         if (list.isEmpty()) { toast("Nenhuma TV conectada"); return }
         val c = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(d(20), d(10), d(20), d(4)) }
         c.addView(t("Se uma TV estiver adiantada, toque em + (ela espera mais). Se estiver atrasada, toque em −.", 13f, Neon.soft))

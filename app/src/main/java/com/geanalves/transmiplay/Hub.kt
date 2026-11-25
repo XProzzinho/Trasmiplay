@@ -58,8 +58,10 @@ object Hub {
     @Volatile var currentIndex = -1; private set
     @Volatile var sessionId = 0; private set
     @Volatile var playing = false; private set
-    @Volatile private var basePos = 0L
-    @Volatile private var baseAt = 0L
+    @Volatile var basePos = 0L; private set
+    @Volatile var baseAt = 0L; private set
+    /** atraso do modo caixinha (ms): 300, ou o atraso da caixa Bluetooth do celular */
+    @Volatile var audioDelay = Proto.AUDIO_DELAY_MS
     @Volatile private var endedHandled = false
     @Volatile var caixinha = false; private set
     @Volatile var lastError: String? = null
@@ -103,6 +105,7 @@ object Hub {
         if (started) return
         started = true
         app = ctx.applicationContext
+        PhoneSpeaker.init(app)
         val ht = HandlerThread("hub").apply { start() }
         worker = Handler(ht.looper)
         loadSavedTracks()
@@ -197,9 +200,20 @@ object Hub {
         }
     }
 
-    class TvConn(private val socket: Socket) {
-        @Volatile var name: String = socket.inetAddress.hostAddress ?: "TV"
-        @Volatile var adj: Int = 0
+    /** qualquer coisa que toca junto (TV ou o próprio celular) */
+    interface Syncable {
+        val name: String
+        val adj: Int
+        fun changeAdj(delta: Int)
+        fun beep(at: Long, freq: Double)
+    }
+
+    class TvConn(private val socket: Socket) : Syncable {
+        @Volatile override var name: String = socket.inetAddress.hostAddress ?: "TV"
+        @Volatile override var adj: Int = 0
+
+        override fun beep(at: Long, freq: Double) =
+            send(JSONObject().put("t", "beep").put("at", at).put("freq", freq).put("ms", 120))
         @Volatile var enabled: Boolean = true
         /** caixa de som Bluetooth dessa TV (o que a TV contou por último) */
         @Volatile var btState: JSONObject? = null
@@ -265,7 +279,7 @@ object Hub {
             notifyUi()
         }
 
-        fun changeAdj(delta: Int) {
+        override fun changeAdj(delta: Int) {
             adj = (adj + delta).coerceIn(-1000, 1000)
             prefs().edit().putInt("adj_$name", adj).apply()
             send(JSONObject().put("t", "adj").put("ms", adj))
@@ -298,7 +312,7 @@ object Hub {
     private fun stateMsg() = JSONObject().put("t", "state").put("id", sessionId)
         .put("playing", playing).put("pos", basePos).put("at", baseAt)
 
-    private fun audioMsg(on: Boolean) = JSONObject().put("t", "audio").put("on", on).put("delay", Proto.AUDIO_DELAY_MS)
+    private fun audioMsg(on: Boolean) = JSONObject().put("t", "audio").put("on", on).put("delay", audioDelay)
 
     // ---------------------------------------------------------------- tocar
 

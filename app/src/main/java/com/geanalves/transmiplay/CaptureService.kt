@@ -62,10 +62,13 @@ class CaptureService : Service() {
     @SuppressLint("MissingPermission")
     private fun startCapture(p: MediaProjection) {
         running = true
-        Hub.setCaixinha(true)
         worker = thread(name = "capture", isDaemon = true) {
             var rec: AudioRecord? = null
             try {
+                // se o som do celular sai numa caixa Bluetooth, as TVs esperam o mesmo atraso dela
+                val bt = PhoneSpeaker.outputName() != null
+                Hub.audioDelay = if (bt) maxOf(PhoneSpeaker.measureOutputLatencyMs() + 20, 180) else Proto.AUDIO_DELAY_MS
+                Hub.setCaixinha(true)
                 val config = AudioPlaybackCaptureConfiguration.Builder(p)
                     .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
                     .addMatchingUsage(AudioAttributes.USAGE_GAME)
