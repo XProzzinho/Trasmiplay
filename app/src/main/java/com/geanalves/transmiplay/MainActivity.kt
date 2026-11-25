@@ -557,8 +557,8 @@ class MainActivity : Activity() {
                 setPadding(d(14), d(14), d(14), d(14))
             }
             b.addView(iv, LinearLayout.LayoutParams(d(54), d(54)))
-            val lbl = t(label, 13f, Neon.white).apply { setPadding(0, d(6), 0, 0) }
-            b.addView(lbl)
+            val lbl = t(label, 13f, Neon.white).apply { gravity = Gravity.CENTER; setPadding(0, d(6), 0, 0) }
+            b.addView(lbl, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             btns.addView(b, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
             return b to iv
         }
