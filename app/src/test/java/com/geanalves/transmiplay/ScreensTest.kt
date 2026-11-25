@@ -57,6 +57,26 @@ class ScreensTest {
         Hub.playItem(Hub.Item("media", "https://x/filme.m3u8", "O Guerreiro das Montanhas", mime = "m3u8"))
         Thread.sleep(400); idle(1600)
         m.invoke(a, 2); idle(600); shot(root, "2_controle")
+        // janela "Caixa de som" com uma TV contando suas caixas
+        PrintWriter(tvs[0].getOutputStream(), true).println(
+            "{\"t\":\"bt\",\"msg\":\"Som da TV saindo na JBL Flip 5\",\"state\":{\"has\":true,\"perm\":true,\"on\":true,\"scanning\":false," +
+                "\"connected\":[{\"addr\":\"A1\",\"name\":\"JBL Flip 5\"}]," +
+                "\"paired\":[{\"addr\":\"A1\",\"name\":\"JBL Flip 5\"},{\"addr\":\"A2\",\"name\":\"Caixa da Cozinha\"}]," +
+                "\"found\":[{\"addr\":\"A3\",\"name\":\"Philco PBS50\"}],\"pending\":\"\"}}")
+        Thread.sleep(500); idle(300)
+        m.invoke(a, 0); idle(300); shot(root, "1b_inicio_caixa")
+        val open = MainActivity::class.java.getDeclaredMethod("openSpeaker", Hub.TvConn::class.java).apply { isAccessible = true }
+        open.invoke(a, Hub.tvs.first { it.name == "TV da Sala" })
+        idle(400)
+        val dlgField = MainActivity::class.java.getDeclaredField("speakerDlg").apply { isAccessible = true }
+        val sd = dlgField.get(a)
+        val dField = sd.javaClass.getDeclaredField("dialog").apply { isAccessible = true }
+        val dialog = dField.get(sd) as android.app.Dialog
+        val dv = dialog.window!!.decorView
+        idle(300)
+        shot(dv, "5_caixa_de_som")
+        dialog.dismiss()
+
         val b = Robolectric.buildActivity(BrowserActivity::class.java).setup().get()
         idle(500); shot(b.window.decorView.rootView, "4_navegador")
         tvs.forEach { it.close() }

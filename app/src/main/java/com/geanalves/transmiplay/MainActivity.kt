@@ -84,6 +84,8 @@ class MainActivity : Activity() {
     private lateinit var syncCard: TextView
     private var dragging = false
     private var thumbUrl: String? = null
+    private var speakerDlg: SpeakerDialog? = null
+    private var lastBtMsg = ""
 
     // configurações
     private lateinit var qualityRadios: List<Neon.Radio>
@@ -628,6 +630,8 @@ class MainActivity : Activity() {
 
         c.addView(section("Mais"))
         val more = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = Neon.cardBg(this@MainActivity) }
+        more.addView(linkRow(R.drawable.ic_speaker, "Caixas de som Bluetooth das TVs", null, card = false) { pickSpeakerTv() })
+        more.addView(divider())
         more.addView(linkRow(R.drawable.ic_tv, "Ajustar atraso das TVs", null, card = false) { adjustDialog() })
         more.addView(divider())
         more.addView(linkRow(R.drawable.ic_info, "Sobre o Transmiplay", null, card = false) {
@@ -786,6 +790,12 @@ class MainActivity : Activity() {
 
         if (::versionText.isInitialized) versionText.text = "Você está na versão ${versionName()}"
         Hub.lastError?.let { toast(it); Hub.lastError = null }
+        speakerDlg?.let { if (it.isOpen) it.render() }
+        // aviso de caixa de som quando a janela está fechada
+        Hub.tvs.firstOrNull { it.btMsg.isNotBlank() && it.btMsg != lastBtMsg }?.let {
+            lastBtMsg = it.btMsg
+            if (speakerDlg?.isOpen != true) toast("${it.name}: ${it.btMsg}")
+        }
         updateProgress()
     }
 
@@ -807,9 +817,15 @@ class MainActivity : Activity() {
         val st = android.text.SpannableStringBuilder("● ").apply {
             setSpan(android.text.style.ForegroundColorSpan(if (tv.enabled) Neon.green else Neon.soft), 0, 1, 0)
             append(if (tv.enabled) "Conectada$adj" else "Fora desta transmissão")
+            tv.btState?.optJSONArray("connected")?.optJSONObject(0)?.optString("name")?.let { append(" · caixa: $it") }
         }
         col.addView(t(st, 12f, if (tv.enabled) Color.parseColor("#0E7490") else Neon.soft))
         r.addView(col, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        // caixa de som Bluetooth dessa TV
+        val btName = tv.btState?.optJSONArray("connected")?.optJSONObject(0)?.optString("name")
+        r.addView(Neon.icon(this, R.drawable.ic_speaker, if (btName != null) Color.parseColor("#06B6D4") else Neon.purple, 9) {
+            openSpeaker(tv)
+        }.apply { contentDescription = "Caixa de som da ${tv.name}" }, LinearLayout.LayoutParams(d(42), d(42)).apply { marginEnd = d(6) })
         r.addView(Neon.Check(this, tv.enabled) { tv.setOn(it) }, LinearLayout.LayoutParams(d(30), d(30)))
         r.setOnClickListener { adjustDialog(tv) }
         r.layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = d(8) }
@@ -879,6 +895,24 @@ class MainActivity : Activity() {
     private fun info(title: String, msg: String) {
         AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
             .setTitle(title).setMessage(msg).setPositiveButton("OK", null).show()
+    }
+
+    // ================================================================== caixa de som Bluetooth
+
+    private fun openSpeaker(tv: Hub.TvConn) {
+        speakerDlg = SpeakerDialog(this, tv).also { it.show() }
+    }
+
+    private fun pickSpeakerTv() {
+        val list = Hub.tvs.toList()
+        when (list.size) {
+            0 -> toast("Nenhuma TV conectada. Abra o Simulplay na TV.")
+            1 -> openSpeaker(list[0])
+            else -> AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
+                .setTitle("Qual TV?")
+                .setItems(list.map { it.name }.toTypedArray()) { _, i -> openSpeaker(list[i]) }
+                .setNegativeButton("Cancelar", null).show()
+        }
     }
 
     // ================================================================== atraso das TVs

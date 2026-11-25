@@ -201,6 +201,11 @@ object Hub {
         @Volatile var name: String = socket.inetAddress.hostAddress ?: "TV"
         @Volatile var adj: Int = 0
         @Volatile var enabled: Boolean = true
+        /** caixa de som Bluetooth dessa TV (o que a TV contou por último) */
+        @Volatile var btState: JSONObject? = null
+        @Volatile var btMsg: String = ""
+
+        fun bt(op: String, addr: String = "") = send(JSONObject().put("t", "bt").put("op", op).put("addr", addr))
         private val out: OutputStream = socket.getOutputStream()
 
         fun send(j: JSONObject) {
@@ -236,6 +241,11 @@ object Hub {
                         "info" -> onInfo(j.optInt("id"), j.optLong("dur"))
                         "ended" -> onEnded(j.optInt("id"))
                         "error" -> onTvError(this, j)
+                        "bt" -> {
+                            j.optJSONObject("state")?.let { btState = it }
+                            if (j.has("msg")) btMsg = j.optString("msg")
+                            notifyUi()
+                        }
                     }
                 }
             } catch (_: Exception) {}
