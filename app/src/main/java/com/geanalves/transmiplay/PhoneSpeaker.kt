@@ -38,6 +38,10 @@ object PhoneSpeaker : Hub.Syncable {
     private var lastSpeed = 1f
     private var seekCooldown = 0L
     private var startPosted = false
+    private var sDiff = 0.0
+    private var diffInit = false
+    private var correcting = false
+    private var nextSpeedAt = 0L
     var lastNote = ""; private set
 
     override val name = "Este celular"
@@ -117,7 +121,7 @@ object PhoneSpeaker : Hub.Syncable {
         }
         if (loadedSession != Hub.sessionId) {
             loadedSession = Hub.sessionId
-            startPosted = false
+            startPosted = false; diffInit = false; correcting = false
             load(p, cur)
         }
         val playing = Hub.playing
@@ -143,12 +147,19 @@ object PhoneSpeaker : Hub.Syncable {
         if (p.playbackState != Player.STATE_READY) return
         val target = Hub.basePos + (clock - Hub.baseAt)
         if (!Hub.autoSync) { speed(p, 1f); return }
-        val diff = p.currentPosition - target
-        when {
-            abs(diff) > 600 -> if (now > seekCooldown) { speed(p, 1f); p.seekTo(target + 150); seekCooldown = now + 1500 }
-            abs(diff) > 15 -> speed(p, (1f - diff / 2500f).coerceIn(0.95f, 1.05f))
-            else -> speed(p, 1f)
+        val raw = p.currentPosition - target
+        if (abs(raw) > 1500) {
+            if (now > seekCooldown) { speed(p, 1f); correcting = false; diffInit = false; p.seekTo(target + 150); seekCooldown = now + 8000 }
+            return
         }
+        // mesma correção suave das TVs: diferença suavizada, até 2%, no máximo 2 vezes por segundo
+        sDiff = if (diffInit) sDiff * 0.92 + raw * 0.08 else raw.toDouble()
+        diffInit = true
+        if (now < nextSpeedAt) return
+        nextSpeedAt = now + 500
+        if (!correcting && abs(sDiff) > 60) correcting = true
+        if (correcting && abs(sDiff) < 15) { correcting = false; speed(p, 1f); return }
+        if (correcting) speed(p, (Math.round((1.0 - sDiff / 3000.0) * 200) / 200.0).toFloat().coerceIn(0.98f, 1.02f))
     }
 
     private fun speed(p: ExoPlayer, s: Float) {
