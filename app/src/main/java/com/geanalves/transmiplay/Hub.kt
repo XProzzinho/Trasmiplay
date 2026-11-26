@@ -32,7 +32,7 @@ object Hub {
     data class Item(
         val kind: String,          // "media" (arquivo/link) ou "youtube"
         val url: String,           // link, id do YouTube ou caminho local
-        val title: String,
+        @Volatile var title: String,
         val uri: Uri? = null,      // música do celular
         @Volatile var durMs: Long = 0,
         val headers: Map<String, String> = emptyMap(), // Referer, cookies... que o site exige
@@ -40,6 +40,7 @@ object Hub {
         val proxy: Boolean = false,// passa o vídeo pelo celular
         @Volatile var sub: Sub? = null,
         val thumb: String? = null,
+        val by: String? = null,    // quem pôs na fila (modo festa)
     )
 
     data class Sub(val url: String, val mime: String, val local: Boolean)
@@ -52,22 +53,103 @@ object Hub {
 
     val tvs = CopyOnWriteArrayList<TvConn>()
     val tracks = CopyOnWriteArrayList<Item>()
-    /** fila "a seguir" (links, vídeos do navegador, canais) */
-    val queue = CopyOnWriteArrayList<Item>()
+    // ---------------------------------------------------------------- grupos de TVs
+    /** o que um grupo de TVs está tocando (cada grupo toca uma coisa) */
+    class Session(val group: String) {
+        @Volatile var current: Item? = null
+        @Volatile var currentIndex = -1
+        @Volatile var sessionId = 0
+        @Volatile var playing = false
+        @Volatile var basePos = 0L
+        @Volatile var baseAt = 0L
+        @Volatile var endedHandled = false
+        val queue = CopyOnWriteArrayList<Item>()
+        fun position(): Long {
+            val p = if (playing) basePos + (SystemClock.elapsedRealtime() - baseAt).coerceAtLeast(0) else basePos
+            val d = current?.durMs ?: 0
+            return if (d > 0) p.coerceAtMost(d) else p
+        }
+    }
+
+    private val sessions = java.util.concurrent.ConcurrentHashMap<String, Session>()
+    @Volatile private var idSeq = 0
+    /** grupo que a tela está controlando agora */
+    @Volatile var active: Session = Session("Principal"); private set
+    fun sessionFor(g: String): Session = sessions.getOrPut(g) { Session(g) }
+    fun allSessions(): List<Session> = sessions.values.toList()
+
+    val groups: List<String> get() = try {
+        val a = org.json.JSONArray(prefs().getString("groups", "[\"Principal\"]"))
+        (0 until a.length()).map { a.getString(it) }.ifEmpty { listOf("Principal") }
+    } catch (_: Exception) { listOf("Principal") }
+    private fun saveGroups(l: List<String>) = prefs().edit().putString("groups", org.json.JSONArray(l).toString()).apply()
+
+    fun selectGroup(g: String) { active = sessionFor(g); prefs().edit().putString("active_group", g).apply(); notifyUi() }
+    fun addGroup(name: String): Boolean {
+        val n = name.trim().take(30)
+        if (n.isBlank() || n in groups) return false
+        saveGroups(groups + n); selectGroup(n); return true
+    }
+    fun removeGroup(g: String) = runOnWorker {
+        val l = groups
+        if (l.size <= 1 || g !in l) return@runOnWorker
+        val rest = l - g
+        saveGroups(rest)
+        val s = sessionFor(g)
+        s.current = null; s.playing = false; s.sessionId = ++idSeq; s.queue.clear()
+        tvs.filter { it.group == g }.forEach { moveTvNow(it, rest[0]) }
+        Cast.devices.filter { it.group == g }.forEach { it.setGroup(rest[0]) }
+        sessions.remove(g)
+        if (active.group == g) active = sessionFor(rest[0])
+        notifyUi()
+    }
+    fun groupTvs(): List<TvConn> = tvs.filter { it.group == active.group }
+    fun moveTv(tv: TvConn, g: String) = runOnWorker { moveTvNow(tv, g); notifyUi() }
+    private fun moveTvNow(tv: TvConn, g: String) {
+        if (tv.group == g) return
+        tv.send(JSONObject().put("t", "stop")); tv.send(audioMsg(false)); tv.send(JSONObject().put("t", "mirror").put("on", false))
+        tv.group = g
+        prefs().edit().putString("group_${tv.name}", g).apply()
+        if (tv.enabled) inSession(sessionFor(g)) { tv.sendCurrent() }
+    }
+
+    /** roda f com outro grupo como "o atual" (no worker) */
+    private inline fun inSession(s: Session, f: () -> Unit) {
+        val prev = active
+        active = s
+        try { f() } finally { active = prev }
+    }
+
+    /** comando vindo de uma TV vale pro grupo dela */
+    private fun forGroup(g: String, f: () -> Unit) {
+        var prev: Session? = null
+        runOnWorker { prev = active; active = sessionFor(g) }
+        f()
+        runOnWorker { prev?.let { active = it } }
+    }
+
+    /** fila "a seguir" do grupo atual */
+    val queue: CopyOnWriteArrayList<Item> get() = active.queue
     /** lista de canais (IPTV) que acabou de abrir: a tela mostra pra escolher */
     var onPlaylist: ((String, List<Iptv.Channel>) -> Unit)? = null
     private val audioSinks = CopyOnWriteArrayList<AudioSink>()
 
-    @Volatile var current: Item? = null; private set
-    @Volatile var currentIndex = -1; private set
-    @Volatile var sessionId = 0; private set
-    @Volatile var playing = false; private set
-    @Volatile var basePos = 0L; private set
-    @Volatile var baseAt = 0L; private set
+    var current: Item? get() = active.current; private set(v) { active.current = v }
+    var currentIndex: Int get() = active.currentIndex; private set(v) { active.currentIndex = v }
+    var sessionId: Int get() = active.sessionId; private set(v) { active.sessionId = v }
+    var playing: Boolean get() = active.playing; private set(v) { active.playing = v }
+    var basePos: Long get() = active.basePos; private set(v) { active.basePos = v }
+    var baseAt: Long get() = active.baseAt; private set(v) { active.baseAt = v }
     /** atraso do modo caixinha (ms): 300, ou o atraso da caixa Bluetooth do celular */
     @Volatile var audioDelay = Proto.AUDIO_DELAY_MS
-    @Volatile private var endedHandled = false
+    private var endedHandled: Boolean get() = active.endedHandled; set(v) { active.endedHandled = v }
     @Volatile var caixinha = false; private set
+    /** espelhando a tela */
+    @Volatile var mirroring = false; private set
+    /** algo ao vivo (som ou tela do celular) */
+    val live: Boolean get() = caixinha || mirroring
+    /** grupo que recebe o som/tela ao vivo */
+    @Volatile var liveGroup = "Principal"; private set
     @Volatile var lastError: String? = null
     /** legenda escolhida antes de transmitir */
     @Volatile var pendingSub: Sub? = null
@@ -84,8 +166,9 @@ object Hub {
     fun setBootStart(on: Boolean) { prefs().edit().putBoolean("boot_start", on).apply(); sendAll(cfgMsg()) }
     private fun cfgMsg() = JSONObject().put("t", "cfg").put("quality", quality).put("sync", autoSync).put("boot", bootStart)
 
-    fun skip(deltaMs: Long) = seek((position() + deltaMs).coerceAtLeast(0))
-    val activeTvs: Int get() = tvs.count { it.enabled }
+    fun skip(deltaMs: Long) = runOnWorker { seekNow((position() + deltaMs).coerceAtLeast(0)) }
+    val activeTvs: Int get() = tvs.count { it.enabled && it.group == active.group } +
+        Cast.devices.count { it.enabled && it.group == active.group }
 
     var listener: (() -> Unit)? = null
     /** outros que querem saber das mudanças (notificação, tela de bloqueio) */
@@ -114,6 +197,8 @@ object Hub {
         started = true
         app = ctx.applicationContext
         PhoneSpeaker.init(app)
+        prefs().getString("active_group", null)?.takeIf { it in groups }?.let { active = sessionFor(it) }
+            ?: run { active = sessionFor(groups[0]) }
         val ht = HandlerThread("hub").apply { start() }
         worker = Handler(ht.looper)
         loadSavedTracks()
@@ -125,6 +210,8 @@ object Hub {
 
         thread(name = "control", isDaemon = true) { runControlServer() }
         thread(name = "audio", isDaemon = true) { runAudioServer() }
+        thread(name = "video", isDaemon = true) { runVideoServer() }
+        Cast.start(app)
         thread(name = "discovery", isDaemon = true) { runDiscovery() }
         http = HttpServer(Proto.HTTP_PORT).also { it.start() }
         worker.post(object : Runnable {
@@ -148,13 +235,15 @@ object Hub {
 
     private var tickCount = 0
     private fun tick() {
-        val cur = current
-        if (cur != null && playing && cur.durMs > 0 && position() >= cur.durMs && now() > baseAt) {
-            if (basePos + (now() - baseAt) > cur.durMs + 400) onEnded(sessionId)
-        }
         tickCount++
-        if (tickCount % 2 == 0 && cur != null) sendAll(stateMsg())
-        if (tickCount % 20 == 0 && cur != null && playing) savePos()
+        for (s in allSessions()) inSession(s) {
+            val cur = current
+            if (cur != null && playing && cur.durMs > 0 && position() >= cur.durMs && now() > baseAt) {
+                if (basePos + (now() - baseAt) > cur.durMs + 400) onEnded(sessionId)
+            }
+            if (tickCount % 2 == 0 && cur != null) sendAll(stateMsg())
+            if (tickCount % 20 == 0 && cur != null && playing) savePos()
+        }
     }
 
     // ---------------------------------------------------------------- descoberta
@@ -224,6 +313,13 @@ object Hub {
         override fun beep(at: Long, freq: Double) =
             send(JSONObject().put("t", "beep").put("at", at).put("freq", freq).put("ms", 120))
         @Volatile var enabled: Boolean = true
+        @Volatile var group: String = "Principal"
+        /** manda pra essa TV o que o grupo dela está tocando */
+        fun sendCurrent() {
+            current?.let { send(loadMsg(it)); send(stateMsg()) }
+            if (caixinha && liveGroup == group) send(audioMsg(true))
+            if (mirroring && liveGroup == group) send(mirrorMsg(true))
+        }
         /** caixa de som Bluetooth dessa TV (o que a TV contou por último) */
         @Volatile var btState: JSONObject? = null
         @Volatile var btMsg: String = ""
@@ -243,9 +339,9 @@ object Hub {
             val n = newName.trim().take(40)
             if (n.isBlank() || n == name) return
             val p = prefs(); val e = p.edit()
-            for (k in listOf("adj_", "on_", "vol_", "mute_")) {
+            for (k in listOf("adj_", "on_", "vol_", "mute_", "group_")) {
                 val old = p.all["$k$name"] ?: continue
-                when (old) { is Int -> e.putInt("$k$n", old); is Boolean -> e.putBoolean("$k$n", old) }
+                when (old) { is Int -> e.putInt("$k$n", old); is Boolean -> e.putBoolean("$k$n", old); is String -> e.putString("$k$n", old) }
             }
             e.apply()
             name = n
@@ -283,22 +379,23 @@ object Hub {
                             send(JSONObject().put("t", "adj").put("ms", adj))
                             send(volMsg())
                             send(cfgMsg())
-                            if (enabled) {
-                                current?.let { send(loadMsg(it)); send(stateMsg()) }
-                                if (caixinha) send(audioMsg(true))
-                            }
+                            group = prefs().getString("group_$name", null)?.takeIf { it in groups } ?: groups[0]
+                            val me = this
+                            if (enabled) runOnWorker { inSession(sessionFor(group)) { me.sendCurrent() } }
                             notifyUi()
                         }
                         "info" -> onInfo(j.optInt("id"), j.optLong("dur"))
                         "ended" -> onEnded(j.optInt("id"))
                         "error" -> onTvError(this, j)
                         // controle remoto da TV
-                        "key" -> when (j.optString("k")) {
-                            "toggle" -> togglePlay()
-                            "fwd" -> skip(10_000)
-                            "back" -> skip(-10_000)
-                            "next" -> next()
-                            "prev" -> prev()
+                        "key" -> forGroup(group) {
+                            when (j.optString("k")) {
+                                "toggle" -> togglePlay()
+                                "fwd" -> skip(10_000)
+                                "back" -> skip(-10_000)
+                                "next" -> next()
+                                "prev" -> prev()
+                            }
                         }
                         "bt" -> {
                             j.optJSONObject("state")?.let { btState = it }
@@ -314,12 +411,12 @@ object Hub {
         fun setOn(on: Boolean) {
             enabled = on
             prefs().edit().putBoolean("on_$name", on).apply()
-            if (on) {
-                current?.let { send(loadMsg(it)); send(stateMsg()) }
-                if (caixinha) send(audioMsg(true))
-            } else {
+            val me = this
+            if (on) runOnWorker { inSession(sessionFor(group)) { me.sendCurrent() } }
+            else {
                 send(JSONObject().put("t", "stop"))
                 send(audioMsg(false))
+                send(mirrorMsg(false))
             }
             notifyUi()
         }
@@ -334,12 +431,14 @@ object Hub {
 
     private fun prefs() = app.getSharedPreferences("transmiplay", Context.MODE_PRIVATE)
 
-    private fun sendAll(j: JSONObject) = tvs.forEach { if (it.enabled) it.send(j) }
+    private fun sendAll(j: JSONObject) = tvs.forEach { if (it.enabled && it.group == active.group) it.send(j) }
+    private fun sendLive(j: JSONObject) = tvs.forEach { if (it.enabled && it.group == liveGroup) it.send(j) }
 
     private fun loadMsg(it: Item): JSONObject {
         val j = JSONObject().put("t", "load").put("id", sessionId).put("kind", it.kind).put("title", it.title)
         when {
             it.uri != null -> j.put("local", true).put("url", "/m/$currentIndex?s=$sessionId")
+            it.url.startsWith("file:") -> j.put("local", true).put("url", "/f/" + java.net.URLEncoder.encode(it.url.substringAfterLast('/'), "UTF-8"))
             it.proxy -> j.put("local", true).put("url", "/p?u=" + java.net.URLEncoder.encode(it.url, "UTF-8"))
             else -> {
                 j.put("local", false).put("url", it.url)
@@ -358,6 +457,9 @@ object Hub {
         .put("playing", playing).put("pos", basePos).put("at", baseAt)
 
     private fun audioMsg(on: Boolean) = JSONObject().put("t", "audio").put("on", on).put("delay", audioDelay)
+    @Volatile var mirrorW = 0; @Volatile var mirrorH = 0
+    private fun mirrorMsg(on: Boolean) = JSONObject().put("t", "mirror").put("on", on)
+        .put("w", mirrorW).put("h", mirrorH).put("delay", audioDelay)
 
     // ---------------------------------------------------------------- tocar
 
@@ -377,7 +479,9 @@ object Hub {
             }
             return@runOnWorker
         }
-        startOrQueue(if (yt != null) Item("youtube", yt, "YouTube") else linkItem(url), queueIt)
+        val item = if (yt != null) Item("youtube", yt, "YouTube") else linkItem(url)
+        if (yt != null) thread(isDaemon = true) { youtubeTitle(yt)?.let { t -> item.title = t; renameRecent(yt, t); notifyUi() } }
+        startOrQueue(item, queueIt)
     }
 
     private fun linkItem(url: String) = Item("media", url, Uri.parse(url).lastPathSegment?.take(60) ?: url,
@@ -417,7 +521,7 @@ object Hub {
     }
 
     private fun remember(it: Item) {
-        if (it.uri != null) return // música do celular já fica na lista dela
+        if (it.uri != null || it.url.startsWith("file:")) return // música do celular já fica na lista dela
         val j = JSONObject().put("kind", it.kind).put("url", it.url).put("title", it.title)
             .put("proxy", it.proxy).put("pos", 0).put("dur", it.durMs).put("at", System.currentTimeMillis())
         it.mime?.let { m -> j.put("mime", m) }
@@ -442,6 +546,38 @@ object Hub {
             saveRecents(l)
         }
     }
+
+    private fun renameRecent(url: String, title: String) = runOnWorker {
+        val l = recents().map { it.j }
+        l.firstOrNull { it.optString("url") == url }?.let { it.put("title", title); saveRecents(l) }
+    }
+
+    /** nome do vídeo do YouTube (sem chave de API) */
+    fun youtubeTitle(id: String): String? = try {
+        val c = java.net.URL("https://www.youtube.com/oembed?format=json&url=https://youtu.be/$id").openConnection() as java.net.HttpURLConnection
+        c.connectTimeout = 4000; c.readTimeout = 4000
+        JSONObject(c.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }).optString("title").takeIf { it.isNotBlank() }
+    } catch (_: Exception) { null }
+
+    /** cabeçalhos (Referer, cookies) do vídeo que passa pelo celular */
+    fun headersFor(target: String): Map<String, String> {
+        val host = try { java.net.URL(target).host } catch (_: Exception) { "" }
+        val items = allSessions().mapNotNull { it.current }
+        return (items.firstOrNull { it.url == target } ?: items.firstOrNull { try { java.net.URL(it.url).host == host } catch (_: Exception) { false } }
+            ?: current)?.headers ?: emptyMap()
+    }
+
+    /** endereço do celular no Wi-Fi */
+    fun localIp(): String? = try {
+        NetworkInterface.getNetworkInterfaces().toList()
+            .filter { it.isUp && !it.isLoopback }
+            .sortedBy { if (it.name.startsWith("wlan")) 0 else if (it.name.startsWith("ap") || it.name.startsWith("swlan")) 1 else 2 }
+            .flatMap { it.inetAddresses.toList() }
+            .firstOrNull { it is java.net.Inet4Address && it.isSiteLocalAddress }?.hostAddress
+    } catch (_: Exception) { null }
+
+    /** pôr na fila de um grupo (modo festa) */
+    fun enqueueIn(group: String, item: Item) = runOnWorker { inSession(sessionFor(group)) { startOrQueue(item, true) } }
 
     fun removeRecent(url: String) = runOnWorker {
         saveRecents(recents().map { it.j }.filter { it.optString("url") != url }); notifyUi()
@@ -481,8 +617,10 @@ object Hub {
         notifyUi()
     }
 
-    fun playTrack(index: Int) = runOnWorker {
-        val t = tracks.getOrNull(index) ?: return@runOnWorker
+    fun playTrack(index: Int) = runOnWorker { playTrackNow(index) }
+
+    private fun playTrackNow(index: Int) {
+        val t = tracks.getOrNull(index) ?: return
         load(t, index)
         if (t.durMs == 0L && t.uri != null) thread(isDaemon = true) {
             try {
@@ -496,10 +634,11 @@ object Hub {
     }
 
     private fun load(item: Item, index: Int, startPos: Long = 0) {
-        if (caixinha) CaptureService.stop(app)
+        if (live && liveGroup == active.group) CaptureService.stop(app)
         savePos()
-        sessionId++
+        sessionId = ++idSeq
         val sid = sessionId
+        val ses = active
         current = item
         currentIndex = index
         playing = false
@@ -511,7 +650,7 @@ object Hub {
         sendAll(stateMsg())
         notifyUi()
         // dá um tempinho pras TVs carregarem e começa todo mundo junto
-        worker.postDelayed({ if (sessionId == sid) doPlay() }, 1200)
+        worker.postDelayed({ inSession(ses) { if (sessionId == sid) doPlay() } }, 1200)
     }
 
     fun togglePlay() = runOnWorker { if (playing) doPause() else doPlay() }
@@ -537,8 +676,10 @@ object Hub {
         notifyUi()
     }
 
-    fun seek(ms: Long) = runOnWorker {
-        if (current == null) return@runOnWorker
+    fun seek(ms: Long) = runOnWorker { seekNow(ms) }
+
+    private fun seekNow(ms: Long) {
+        if (current == null) return
         basePos = ms.coerceAtLeast(0)
         baseAt = if (playing) now() + Proto.START_LEAD_MS else now()
         endedHandled = false
@@ -547,12 +688,12 @@ object Hub {
     }
 
     fun next() = runOnWorker {
-        if (currentIndex >= 0 && currentIndex + 1 < tracks.size) playTrack(currentIndex + 1)
+        if (currentIndex >= 0 && currentIndex + 1 < tracks.size) playTrackNow(currentIndex + 1)
         else if (queue.isNotEmpty()) load(queue.removeAt(0), -1)
     }
 
     fun prev() = runOnWorker {
-        if (position() > 3000 || currentIndex <= 0) seek(0) else playTrack(currentIndex - 1)
+        if (position() > 3000 || currentIndex <= 0) seekNow(0) else playTrackNow(currentIndex - 1)
     }
 
     fun stopAll() = runOnWorker {
@@ -560,24 +701,29 @@ object Hub {
         current = null
         currentIndex = -1
         playing = false
-        sessionId++
+        sessionId = ++idSeq
         sendAll(JSONObject().put("t", "stop"))
         notifyUi()
     }
 
     /** a TV não conseguiu abrir: tenta sozinho passando o vídeo pelo celular */
     private fun onTvError(tv: TvConn, j: JSONObject) = runOnWorker {
-        val cur = current
         val id = j.optInt("id", -1)
+        val ses = if (id == -1) sessionFor(tv.group) else allSessions().firstOrNull { it.sessionId == id }
+            ?: return@runOnWorker // erro de um vídeo antigo
+        inSession(ses) { tvError(tv, j, ses) }
+    }
+
+    private fun tvError(tv: TvConn, j: JSONObject, ses: Session) {
+        val cur = current
         val http = j.optInt("http")
-        if (id != -1 && id != sessionId) return@runOnWorker // erro de um vídeo antigo
         if (cur != null && cur.kind == "media" && cur.uri == null && !cur.proxy) {
             lastError = "A TV não abriu direto. Tentando passar o vídeo pelo celular…"
             notifyUi()
             val pos = position()
             load(cur.copy(proxy = true), currentIndex)
-            if (pos > 3000) worker.postDelayed({ seek(pos) }, 200)
-            return@runOnWorker
+            if (pos > 3000) worker.postDelayed({ inSession(ses) { seekNow(pos) } }, 200)
+            return
         }
         val why = when {
             http == 403 || http == 401 -> "o site não deixou outro aparelho abrir o vídeo (erro $http)"
@@ -593,14 +739,19 @@ object Hub {
     }
 
     private fun onInfo(id: Int, dur: Long) {
-        val cur = current ?: return
-        if (id == sessionId && dur > 0 && cur.durMs == 0L) { cur.durMs = dur; notifyUi() }
+        val cur = allSessions().firstOrNull { it.sessionId == id }?.current ?: return
+        if (dur > 0 && cur.durMs == 0L) { cur.durMs = dur; notifyUi() }
     }
 
     private fun onEnded(id: Int) = runOnWorker {
-        if (id != sessionId || endedHandled || !playing) return@runOnWorker
+        val ses = allSessions().firstOrNull { it.sessionId == id } ?: return@runOnWorker
+        inSession(ses) { endedNow() }
+    }
+
+    private fun endedNow() {
+        if (endedHandled || !playing) return
         endedHandled = true
-        if (currentIndex >= 0 && currentIndex + 1 < tracks.size) playTrack(currentIndex + 1)
+        if (currentIndex >= 0 && currentIndex + 1 < tracks.size) playTrackNow(currentIndex + 1)
         else if (queue.isNotEmpty()) load(queue.removeAt(0), -1)
         else {
             basePos = current?.durMs ?: position()
@@ -659,14 +810,95 @@ object Hub {
 
     fun setCaixinha(on: Boolean) = runOnWorker {
         if (on == caixinha) return@runOnWorker
+        if (on && !mirroring) liveGroup = active.group
         caixinha = on
-        if (on && current != null) {
-            current = null; currentIndex = -1; playing = false; sessionId++
-            sendAll(JSONObject().put("t", "stop"))
+        inSession(sessionFor(liveGroup)) {
+            if (on && current != null) {
+                current = null; currentIndex = -1; playing = false; sessionId = ++idSeq
+                sendAll(JSONObject().put("t", "stop"))
+            }
         }
-        sendAll(audioMsg(on))
+        sendLive(audioMsg(on))
         if (!on) audioSinks.forEach { it.close() }
         notifyUi()
+    }
+
+    // ---------------------------------------------------------------- espelhar a tela
+
+    private val videoSinks = CopyOnWriteArrayList<VideoSink>()
+    @Volatile private var lastConfig: ByteArray? = null
+    /** pede um quadro completo ao codificador (quando entra uma TV nova ou perdeu pedaço) */
+    @Volatile var onNeedKey: (() -> Unit)? = null
+
+    fun setMirror(on: Boolean) = runOnWorker {
+        if (on == mirroring) return@runOnWorker
+        if (on && !caixinha) liveGroup = active.group
+        mirroring = on
+        inSession(sessionFor(liveGroup)) {
+            if (on && current != null) {
+                current = null; currentIndex = -1; playing = false; sessionId = ++idSeq
+                sendAll(JSONObject().put("t", "stop"))
+            }
+        }
+        sendLive(mirrorMsg(on))
+        if (!on) { videoSinks.forEach { it.close() }; lastConfig = null }
+        notifyUi()
+    }
+
+    /** o tamanho da imagem mudou (girou o celular) */
+    fun mirrorSize(w: Int, h: Int) {
+        mirrorW = w; mirrorH = h
+        if (mirroring) runOnWorker { sendLive(mirrorMsg(true)) }
+    }
+
+    /** pacote: horário (8) + tipo (4: 1 = configuração, 2 = quadro completo) + tamanho (4) + dados */
+    fun pushVideo(packet: ByteArray, flags: Int) {
+        if (flags and 1 != 0) lastConfig = packet
+        for (s in videoSinks) s.offer(packet, flags)
+    }
+
+    private fun runVideoServer() {
+        try {
+            val ss = ServerSocket(Proto.VIDEO_PORT).apply { reuseAddress = true }
+            while (started) {
+                val s = ss.accept()
+                s.tcpNoDelay = true
+                s.sendBufferSize = 256 * 1024
+                val sink = VideoSink(s)
+                lastConfig?.let { sink.offer(it, 1) }
+                videoSinks += sink
+                onNeedKey?.invoke()
+            }
+        } catch (_: Exception) {}
+    }
+
+    class VideoSink(private val socket: Socket) {
+        private val q = ArrayBlockingQueue<ByteArray>(120)
+        @Volatile private var needKey = true
+        init {
+            thread(name = "video-out", isDaemon = true) {
+                try {
+                    val out = socket.getOutputStream()
+                    while (true) out.write(q.take())
+                } catch (_: Exception) {}
+                close()
+            }
+        }
+        fun offer(p: ByteArray, flags: Int) {
+            val config = flags and 1 != 0
+            val key = flags and 2 != 0
+            if (needKey && !config) { if (!key) return; needKey = false }
+            if (!q.offer(p)) {
+                // rede lenta: joga fora e espera o próximo quadro completo
+                q.clear(); needKey = true
+                lastConfig?.let { q.offer(it) }
+                onNeedKey?.invoke()
+            }
+        }
+        fun close() {
+            try { socket.close() } catch (_: Exception) {}
+            videoSinks.remove(this)
+        }
     }
 
     fun pushAudio(packet: ByteArray) {

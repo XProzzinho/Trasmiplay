@@ -1130,7 +1130,7 @@ class BrowserActivity : Activity() {
 
     private fun refreshMini() {
         val cur = Hub.current
-        mini.visibility = if (cur != null || Hub.caixinha) View.VISIBLE else View.GONE
+        mini.visibility = if (cur != null || Hub.live) View.VISIBLE else View.GONE
         miniTitle.text = when {
             Hub.caixinha -> "Modo caixinha ligado"
             cur != null -> cur.title

@@ -110,7 +110,7 @@ object MicSync {
     /** alinha todo mundo pela TV que soou mais cedo */
     private fun apply(med: Map<Hub.Syncable, Double?>) {
         for ((tv, e) in med) if (e != null) measured[tv.name] = e
-        val all: List<Hub.Syncable> = Hub.tvs.toList<Hub.Syncable>() + listOfNotNull(PhoneSpeaker.takeIf { it.enabled })
+        val all: List<Hub.Syncable> = Hub.groupTvs().toList<Hub.Syncable>() + listOfNotNull(PhoneSpeaker.takeIf { it.enabled })
         val active = all.filter { measured.containsKey(it.name) }
         if (active.size < 2) return // com uma só ainda não dá pra comparar: espera medir outra
         // com o celular junto, ele é a referência (o som dele não dá pra atrasar no modo caixinha)

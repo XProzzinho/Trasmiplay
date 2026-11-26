@@ -62,6 +62,15 @@ class MainActivity : Activity() {
     private lateinit var linkPanel: LinearLayout
     private lateinit var filesPanel: LinearLayout
     private lateinit var boxPanel: LinearLayout
+    private lateinit var mirrorPanel: LinearLayout
+    private lateinit var mirrorButton: LinearLayout
+    private lateinit var partyPanel: LinearLayout
+    private lateinit var partyBox: LinearLayout
+    private lateinit var groupBar: LinearLayout
+    private lateinit var otherGroups: LinearLayout
+    private lateinit var ctrlTitle: TextView
+    private var wantMirror = false
+    private var partyKey = ""
     private lateinit var linkInput: EditText
     private lateinit var trackBox: LinearLayout
     private lateinit var boxButton: LinearLayout
@@ -339,10 +348,12 @@ class MainActivity : Activity() {
             Triple(R.drawable.ic_folder, "Vídeos do\ncelular", 1),
             Triple(R.drawable.ic_link, "Link\n(YouTube...)", 0),
             Triple(R.drawable.ic_speaker, "Som do\ncelular", 2),
+            Triple(R.drawable.ic_cast, "Espelhar\na tela", 3),
+            Triple(R.drawable.ic_star, "Modo\nfesta", 4),
         )
         val cards = mutableListOf<LinearLayout>()
         val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        for (rowI in 0..1) {
+        for (rowI in 0..2) {
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             for (colI in 0..1) {
                 val (ic, label, key) = defs[rowI * 2 + colI]
@@ -415,17 +426,42 @@ class MainActivity : Activity() {
         })
         c.addView(boxPanel)
 
+        // painel espelhar
+        mirrorPanel = panel()
+        mirrorPanel.addView(t("A tela do celular aparece em todas as TVs do grupo, com o som junto (Android 10 ou mais novo pro som). " +
+            "Bom pra jogos, fotos, apps que não deixam transmitir e apresentações.", 13f, Neon.soft))
+        mirrorButton = Neon.bigButton(this, "Espelhar a tela nas TVs", R.drawable.ic_cast) { toggleMirror() }
+        mirrorPanel.addView(mirrorButton, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = d(12) })
+        mirrorPanel.addView(t("Gire o celular que a TV gira junto. Tem um atraso pequeno (uns 0,3 s) pra todas as TVs ficarem juntas.", 12f, Neon.soft).apply {
+            setPadding(0, d(8), 0, 0)
+        })
+        c.addView(mirrorPanel)
+
+        // painel festa
+        partyPanel = panel()
+        partyBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
+        partyPanel.addView(partyBox)
+        c.addView(partyPanel)
+
         // continuar assistindo
         recentBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         c.addView(recentBox)
 
         // TVs
         c.addView(section("Televisões encontradas", Neon.icon(this, R.drawable.ic_refresh, Neon.lilac, 6) {
-            toast("Procurando… abra o Simulplay nas TVs (mesmo Wi-Fi)")
+            toast("Procurando TVs, Chromecast e Smart TVs no Wi-Fi…")
+            Cast.refresh()
             refresh()
         }.apply { layoutParams = LinearLayout.LayoutParams(d(36), d(36)) }))
+        groupBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        c.addView(android.widget.HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(groupBar)
+        }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = d(10) })
         tvList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         c.addView(tvList)
+        otherGroups = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        c.addView(otherGroups)
 
         val sel = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -467,22 +503,24 @@ class MainActivity : Activity() {
             card.background = Neon.cardBg(this, if (on) Neon.cardHi else Neon.card, 22,
                 if (on) Neon.purple2 else Neon.stroke, if (on) 2 else 0)
         }
-        listOf(0 to linkPanel, 1 to filesPanel, 2 to boxPanel).forEach { (k2, p) ->
+        listOf(0 to linkPanel, 1 to filesPanel, 2 to boxPanel, 3 to mirrorPanel, 4 to partyPanel).forEach { (k2, p) ->
             p.visibility = if (k2 == source) View.VISIBLE else View.GONE
         }
     }
 
-    private fun panelFor(k: Int) = when (k) { 0 -> linkPanel; 1 -> filesPanel; 2 -> boxPanel; else -> null }
+    private fun panelFor(k: Int) = when (k) { 0 -> linkPanel; 1 -> filesPanel; 2 -> boxPanel; 3 -> mirrorPanel; 4 -> partyPanel; else -> null }
 
     private fun transmitAll() {
-        Hub.tvs.forEach { if (!it.enabled) it.setOn(true) }
+        Hub.groupTvs().forEach { if (!it.enabled) it.setOn(true) }
         when {
-            Hub.tvs.isEmpty() -> toast("Nenhuma TV ainda. Abra o Simulplay na TV, no mesmo Wi-Fi.")
-            Hub.current != null || Hub.caixinha -> selectTab(2)
+            Hub.groupTvs().isEmpty() && Cast.devices.none { it.enabled && it.group == Hub.active.group } ->
+                toast("Nenhuma TV nesse grupo. Abra o Simulplay na TV, no mesmo Wi-Fi.")
+            Hub.current != null || Hub.live -> selectTab(2)
             source == 0 && linkInput.text.startsWith("http") -> { Hub.playLink(linkInput.text.toString().trim()); selectTab(2) }
             source == 1 && Hub.tracks.isNotEmpty() -> { Hub.playTrack(0); selectTab(2) }
             source == 1 -> pickMedia()
             source == 2 -> toggleCaixinha()
+            source == 3 -> toggleMirror()
             else -> selectTab(1)
         }
     }
@@ -508,14 +546,19 @@ class MainActivity : Activity() {
 
         // ativo: "TVs em órbita"
         ctrlActive = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
-        ctrlActive.addView(t("Transmissão Ativa", 22f, Neon.white, true).apply { gravity = Gravity.CENTER; setPadding(0, d(4), 0, d(2)) }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        ctrlTitle = t("Transmissão Ativa", 22f, Neon.white, true).apply { gravity = Gravity.CENTER; setPadding(0, d(4), 0, d(2)) }
+        ctrlActive.addView(ctrlTitle, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         ctrlActive.addView(t("Toque numa TV para tirar ou pôr na transmissão", 13f, Neon.soft).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         orbit = OrbitView(this).apply {
             contentDescription = "Controle da transmissão: toque no meio para tocar ou pausar, arraste o anel para avançar"
             onToggle = { Hub.togglePlay() }
             onTv = { i ->
-                val tv = Hub.tvs.getOrNull(i)
-                if (tv != null) tv.setOn(!tv.enabled) else PhoneSpeaker.setEnabled(!PhoneSpeaker.enabled)
+                val tvs = Hub.groupTvs(); val ext = extInGroup()
+                when {
+                    i < tvs.size -> tvs[i].let { it.setOn(!it.enabled) }
+                    i < tvs.size + ext.size -> ext[i - tvs.size].let { it.setEnabled(!it.enabled) }
+                    else -> PhoneSpeaker.setEnabled(!PhoneSpeaker.enabled)
+                }
             }
             onSeek = { p -> Hub.current?.durMs?.takeIf { it > 0 }?.let { Hub.seek((it * p).toLong()) } }
         }
@@ -739,14 +782,19 @@ class MainActivity : Activity() {
         }
 
         // TVs
+        renderGroups()
         tvList.removeAllViews()
-        if (Hub.tvs.isEmpty()) {
-            tvList.addView(t("Nenhuma TV ainda. Abra o Simulplay na TV, no mesmo Wi-Fi.", 14f, Neon.soft).apply {
+        val gTvs = Hub.groupTvs()
+        if (gTvs.isEmpty()) {
+            tvList.addView(t(if (Hub.tvs.isEmpty()) "Nenhuma TV ainda. Abra o Simulplay na TV, no mesmo Wi-Fi."
+                else "Nenhuma TV com Simulplay nesse grupo. Segure o dedo numa TV pra mudar ela de grupo.", 14f, Neon.soft).apply {
                 background = Neon.cardBg(this@MainActivity); setPadding(d(14), d(16), d(14), d(16))
-            }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = d(8) })
         }
         tvList.addView(phoneRow(), 0)
-        for (tv in Hub.tvs) tvList.addView(tvRow(tv))
+        for (tv in gTvs) tvList.addView(tvRow(tv))
+        for (dv in extInGroup()) tvList.addView(extRow(dv))
+        renderOtherGroups()
         val n = Hub.activeTvs
         selectedText.text = android.text.SpannableStringBuilder().apply {
             append(if (n == 1) "1 televisão selecionada" else "$n televisões selecionadas")
@@ -778,25 +826,31 @@ class MainActivity : Activity() {
         }
 
         // caixinha
-        boxButtonText.text = if (Hub.caixinha) "Desligar som nas TVs" else "Ligar som nas TVs"
-        boxButton.background = if (Hub.caixinha) Neon.cardBg(this, Neon.red, 26, 0, 0) else Neon.buttonBg(this)
+        boxButtonText.text = if (Hub.caixinha && !Hub.mirroring) "Desligar som nas TVs" else "Ligar som nas TVs"
+        boxButton.background = if (Hub.caixinha && !Hub.mirroring) Neon.cardBg(this, Neon.red, 26, 0, 0) else Neon.buttonBg(this)
+        (mirrorButton.getChildAt(1) as TextView).text = if (Hub.mirroring) "Parar de espelhar" else "Espelhar a tela nas TVs"
+        mirrorButton.background = if (Hub.mirroring) Neon.cardBg(this, Neon.red, 26, 0, 0) else Neon.buttonBg(this)
+        renderParty()
 
         // controle
         val cur = Hub.current
-        val active = cur != null || Hub.caixinha
+        val active = cur != null || (Hub.live && Hub.liveGroup == Hub.active.group)
         ctrlEmpty.visibility = if (active) View.GONE else View.VISIBLE
         ctrlActive.visibility = if (active) View.VISIBLE else View.GONE
         tvCountText.text = if (n == 1) "1 TV" else "$n TVs"
-        orbit.tvs = Hub.tvs.map { OrbitView.Tv(it.name, it.enabled) } + OrbitView.Tv("Celular", PhoneSpeaker.enabled)
-        orbit.playing = Hub.playing || (Hub.caixinha && cur == null)
-        orbit.speaker = Hub.caixinha && cur == null
+        orbit.tvs = Hub.groupTvs().map { OrbitView.Tv(it.name, it.enabled) } +
+            extInGroup().map { OrbitView.Tv(it.name, it.enabled) } + OrbitView.Tv("Celular", PhoneSpeaker.enabled)
+        val liveHere = Hub.live && Hub.liveGroup == Hub.active.group
+        orbit.playing = Hub.playing || (liveHere && cur == null)
+        orbit.speaker = liveHere && cur == null
         orbit.seekable = cur != null
-        if (Hub.caixinha && cur == null) {
-            nowTitle.text = "Som do celular"
+        ctrlTitle.text = if (Hub.groups.size > 1) "Transmissão · ${Hub.active.group}" else "Transmissão Ativa"
+        if (liveHere && cur == null) {
+            nowTitle.text = if (Hub.mirroring) "Tela do celular" else "Som do celular"
             thumbUrl = null
             thumb.setImageResource(R.drawable.logo)
-            thumbBadge.text = "AO VIVO · modo caixinha"
-            syncCard.text = "●  Som do celular tocando nas TVs"
+            thumbBadge.text = if (Hub.mirroring) "AO VIVO · espelhando a tela" else "AO VIVO · modo caixinha"
+            syncCard.text = if (Hub.mirroring) "●  Tela do celular nas TVs" else "●  Som do celular tocando nas TVs"
             orbit.timeText = "AO VIVO"
         } else if (cur != null) {
             nowTitle.text = cur.title
@@ -896,8 +950,144 @@ class MainActivity : Activity() {
         }.apply { contentDescription = "Caixa de som da ${tv.name}" }, LinearLayout.LayoutParams(d(42), d(42)).apply { marginEnd = d(6) })
         r.addView(Neon.Check(this, tv.enabled) { tv.setOn(it) }, LinearLayout.LayoutParams(d(30), d(30)))
         r.setOnClickListener { adjustDialog(tv) }
+        r.setOnLongClickListener { pickGroup(tv.name, tv.group) { Hub.moveTv(tv, it) }; true }
         r.layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = d(8) }
         return r
+    }
+
+    // ================================================================== grupos, Chromecast/Smart TV e festa
+
+    private fun extInGroup(): List<Cast.Device> = Cast.devices.filter { it.group == Hub.active.group }
+
+    private fun chip(label: String, on: Boolean, onTap: () -> Unit) = t(label, 14f, if (on) Color.WHITE else Neon.white, true).apply {
+        background = if (on) Neon.buttonBg(this@MainActivity, 18) else Neon.cardBg(this@MainActivity, Color.WHITE, 18, Neon.stroke, 1)
+        setPadding(d(16), d(8), d(16), d(8))
+        setOnClickListener { onTap() }
+    }
+
+    private fun renderGroups() {
+        groupBar.removeAllViews()
+        val gs = Hub.groups
+        for (g in gs) {
+            val n = Hub.tvs.count { it.group == g } + Cast.devices.count { it.group == g && it.enabled }
+            groupBar.addView(chip("$g · $n", g == Hub.active.group) { Hub.selectGroup(g) }.apply {
+                setOnLongClickListener {
+                    if (gs.size > 1) AlertDialog.Builder(this@MainActivity, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
+                        .setTitle("Apagar o grupo \"$g\"?")
+                        .setMessage("As TVs dele voltam pro grupo ${gs.first { it != g }}.")
+                        .setPositiveButton("Apagar") { _, _ -> Hub.removeGroup(g) }
+                        .setNegativeButton("Cancelar", null).show()
+                    true
+                }
+            }, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply { marginEnd = d(8) })
+        }
+        groupBar.addView(chip("+ Grupo", false) { newGroupDialog(null) })
+    }
+
+    private fun newGroupDialog(after: ((String) -> Unit)?) {
+        val input = EditText(this).apply { hint = "Ex.: Quarto, Varanda"; isSingleLine = true; setTextColor(Neon.white) }
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
+            .setTitle("Novo grupo de TVs")
+            .setMessage("Cada grupo toca uma coisa diferente ao mesmo tempo. Depois segure o dedo numa TV pra pôr ela no grupo.")
+            .setView(FrameLayout(this).apply { setPadding(d(20), 0, d(20), 0); addView(input) })
+            .setPositiveButton("Criar") { _, _ ->
+                val n = input.text.toString().trim()
+                if (!Hub.addGroup(n)) toast("Escolha um nome que ainda não existe") else after?.invoke(n)
+            }
+            .setNegativeButton("Cancelar", null).show()
+    }
+
+    private fun pickGroup(name: String, cur: String, onPick: (String) -> Unit) {
+        val gs = Hub.groups
+        val labels = (gs.map { if (it == cur) "$it  ✓" else it } + "+ Novo grupo").toTypedArray()
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
+            .setTitle("Grupo da $name")
+            .setItems(labels) { _, i -> if (i < gs.size) onPick(gs[i]) else newGroupDialog(onPick) }
+            .setNegativeButton("Cancelar", null).show()
+    }
+
+    /** resumo dos outros grupos (tocar em um troca pra ele) */
+    private fun renderOtherGroups() {
+        otherGroups.removeAllViews()
+        for (g in Hub.groups) {
+            if (g == Hub.active.group) continue
+            val s = Hub.sessionFor(g)
+            val n = Hub.tvs.count { it.group == g }
+            val what = when {
+                Hub.live && Hub.liveGroup == g -> if (Hub.mirroring) "espelhando a tela" else "som do celular"
+                s.current != null -> (if (s.playing) "tocando " else "pausado: ") + s.current!!.title
+                else -> "parado"
+            }
+            otherGroups.addView(miniRow("Grupo $g · $n ${if (n == 1) "TV" else "TVs"}", what, R.drawable.ic_tv, { Hub.selectGroup(g) }, null))
+        }
+    }
+
+    private fun extRow(dv: Cast.Device): View {
+        val r = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            background = Neon.cardBg(this@MainActivity, Neon.card, 18, 0, 0)
+            setPadding(d(10), d(10), d(14), d(10))
+        }
+        val screen = FrameLayout(this).apply {
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.parseColor("#94A3B8"), Color.parseColor("#475569"))).apply { cornerRadius = d(8).toFloat() }
+        }
+        screen.addView(Neon.icon(this, R.drawable.ic_cast, Color.WHITE, 8), FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        r.addView(screen, LinearLayout.LayoutParams(d(64), d(42)))
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(d(14), 0, 0, 0) }
+        col.addView(t(dv.name, 16f, Neon.white, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
+        col.addView(t(dv.label + if (dv.enabled && dv.status.isNotBlank()) " · ${dv.status}" else " · toque pra usar", 12f,
+            if (dv.enabled) Color.parseColor("#0E7490") else Neon.soft).apply { maxLines = 2 })
+        r.addView(col, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        r.addView(Neon.Check(this, dv.enabled) { dv.setEnabled(it) }, LinearLayout.LayoutParams(d(30), d(30)))
+        r.setOnClickListener { dv.setEnabled(!dv.enabled) }
+        r.setOnLongClickListener { pickGroup(dv.name, dv.group) { dv.setGroup(it) }; true }
+        r.layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = d(8) }
+        return r
+    }
+
+    private fun qr(text: String, size: Int): android.graphics.Bitmap {
+        val m = com.google.zxing.qrcode.QRCodeWriter().encode(text, com.google.zxing.BarcodeFormat.QR_CODE, size, size,
+            mapOf(com.google.zxing.EncodeHintType.MARGIN to 1))
+        val px = IntArray(size * size) { if (m[it % size, it / size]) Color.parseColor("#0F172A") else Color.WHITE }
+        return android.graphics.Bitmap.createBitmap(px, size, size, android.graphics.Bitmap.Config.ARGB_8888)
+    }
+
+    private fun renderParty() {
+        if (!::partyBox.isInitialized) return
+        val url = Party.url()
+        val key = "${Party.on}|$url|${Party.added}|${Party.group}"
+        if (key == partyKey) return
+        partyKey = key
+        partyBox.removeAllViews()
+        partyBox.addView(t("Os amigos (no mesmo Wi-Fi) leem o QR code e põem músicas e vídeos na fila, pelo celular deles. Não precisam instalar nada.", 13f, Neon.soft),
+            LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        if (Party.on && url != null) {
+            partyBox.addView(ImageView(this).apply { setImageBitmap(qr(url, 512)) },
+                LinearLayout.LayoutParams(d(220), d(220)).apply { topMargin = d(14) })
+            partyBox.addView(t(url, 14f, Neon.purple, true).apply { gravity = Gravity.CENTER; setPadding(0, d(8), 0, 0) },
+                LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            partyBox.addView(t("Tocando no grupo ${Party.group}" + if (Party.added > 0) " · ${Party.added} pedidos" else "", 12f, Neon.soft).apply {
+                gravity = Gravity.CENTER; setPadding(0, d(4), 0, 0)
+            }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            row.addView(smallButton("Copiar link") {
+                (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("festa", url))
+                toast("Link copiado")
+            }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+            row.addView(smallButton("Compartilhar") {
+                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain")
+                    .putExtra(Intent.EXTRA_TEXT, "Põe sua música na festa: $url"), "Mandar o link"))
+            }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginStart = d(8) })
+            partyBox.addView(row, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = d(12) })
+            partyBox.addView(Neon.bigButton(this, "Encerrar a festa", R.drawable.ic_close) { Party.setOn(false) }.apply {
+                background = Neon.cardBg(this@MainActivity, Neon.red, 26, 0, 0)
+            }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = d(12) })
+        } else {
+            if (url == null) partyBox.addView(t("Conecte no Wi-Fi primeiro.", 13f, Neon.red), LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = d(8) })
+            partyBox.addView(Neon.bigButton(this, "Começar a festa", R.drawable.ic_star) { Party.setOn(true) },
+                LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = d(12) })
+        }
     }
 
     // ================================================================== fila, recentes e canais
@@ -928,7 +1118,8 @@ class MainActivity : Activity() {
             setPadding(d(8), d(6), d(4), d(6)); setOnClickListener { Hub.clearQueue() }
         }))
         q.forEachIndexed { i, it ->
-            val sub = when { it.kind == "youtube" -> "YouTube"; it.mime != null -> it.mime.uppercase(); else -> "Link" }
+            val sub = (if (it.by != null) "pedido por ${it.by} · " else "") +
+                when { it.kind == "youtube" -> "YouTube"; it.url.startsWith("file:") -> "Música da festa"; it.mime != null -> it.mime.uppercase(); else -> "Link" }
             queueBox.addView(miniRow("${i + 1}. ${it.title}", sub, R.drawable.ic_play, { Hub.playQueued(i) }, { Hub.removeQueued(i) }))
         }
     }
@@ -1152,7 +1343,7 @@ class MainActivity : Activity() {
 
     /** TVs + o celular (quando ele está tocando junto) */
     private fun syncables(): List<Hub.Syncable> =
-        Hub.tvs.toList<Hub.Syncable>() + listOfNotNull(PhoneSpeaker.takeIf { it.enabled })
+        Hub.groupTvs().toList<Hub.Syncable>() + listOfNotNull(PhoneSpeaker.takeIf { it.enabled })
 
     private fun startMic(list: List<Hub.Syncable>) {
         if (Hub.playing) Hub.togglePlay() // pausa pra música não atrapalhar
@@ -1306,7 +1497,21 @@ class MainActivity : Activity() {
 
     // ================================================================== caixinha
 
+    private fun toggleMirror() {
+        if (Hub.mirroring) { CaptureService.stop(this); return }
+        if (Hub.caixinha) CaptureService.stop(this)
+        wantMirror = true
+        // o som junto precisa da permissão de áudio (Android 10+); sem ela espelha só a imagem
+        if (Build.VERSION.SDK_INT >= 29 && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_AUDIO)
+            return
+        }
+        val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        startActivityForResult(mpm.createScreenCaptureIntent(), REQ_PROJECTION)
+    }
+
     private fun toggleCaixinha() {
+        wantMirror = false
         if (Hub.caixinha) { CaptureService.stop(this); return }
         if (Build.VERSION.SDK_INT < 29) { toast("O som do celular precisa de Android 10 ou mais novo"); return }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -1324,7 +1529,12 @@ class MainActivity : Activity() {
             else toast("Sem o microfone não dá pra escutar as TVs")
         }
         if (requestCode == REQ_AUDIO) {
-            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) toggleCaixinha()
+            val ok = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+            if (wantMirror) {
+                if (!ok) toast("Sem a permissão de áudio a tela vai sem som")
+                val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                startActivityForResult(mpm.createScreenCaptureIntent(), REQ_PROJECTION)
+            } else if (ok) toggleCaixinha()
             else toast("Sem a permissão de áudio não dá pra pegar o som")
         }
     }
@@ -1342,11 +1552,11 @@ class MainActivity : Activity() {
             Hub.addTracks(uris)
         }
         if (requestCode == REQ_PROJECTION) {
-            if (resultCode == RESULT_OK && data != null && Build.VERSION.SDK_INT >= 29) {
+            if (resultCode == RESULT_OK && data != null && (wantMirror || Build.VERSION.SDK_INT >= 29)) {
                 Hub.lastError = null
-                CaptureService.start(this, resultCode, data)
+                CaptureService.start(this, resultCode, data, mirror = wantMirror)
                 selectTab(2)
-            } else toast("Precisa da sua permissão pra pegar o som")
+            } else toast(if (wantMirror) "Precisa da sua permissão pra espelhar a tela" else "Precisa da sua permissão pra pegar o som")
         }
     }
 

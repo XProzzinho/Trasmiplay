@@ -69,7 +69,7 @@ class MediaControls(private val svc: Service) {
 
     private fun update() {
         val cur = Hub.current
-        val active = cur != null || Hub.caixinha
+        val active = cur != null || Hub.live
         // volume: com o celular tocando junto, o botão mexe no som do celular; senão nas TVs
         if (active && Hub.activeTvs > 0 && !PhoneSpeaker.enabled) {
             session.setPlaybackToRemote(volume)
@@ -82,13 +82,13 @@ class MediaControls(private val svc: Service) {
             if (lastKey != "") { lastKey = ""; notify(TransmitService.buildNotification(svc, "Pronto pra mandar pras TVs")) }
             return
         }
-        val title = if (cur == null) "Som do celular" else cur.title
+        val title = if (cur == null) (if (Hub.mirroring) "Tela do celular" else "Som do celular") else cur.title
         val sub = when {
-            cur == null -> "Modo caixinha · ao vivo"
+            cur == null -> if (Hub.mirroring) "Espelhando · ao vivo" else "Modo caixinha · ao vivo"
             Hub.activeTvs == 1 -> "Tocando em 1 TV"
             else -> "Tocando em ${Hub.activeTvs} TVs"
         }
-        val playing = Hub.playing || (Hub.caixinha && cur == null)
+        val playing = Hub.playing || (Hub.live && cur == null)
         var actions = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or
             PlaybackState.ACTION_STOP
         if (cur != null) actions = actions or PlaybackState.ACTION_SEEK_TO or PlaybackState.ACTION_FAST_FORWARD or

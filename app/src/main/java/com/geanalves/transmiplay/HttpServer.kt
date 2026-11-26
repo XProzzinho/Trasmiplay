@@ -53,10 +53,12 @@ class HttpServer(private val port: Int) {
                 val out = sock.getOutputStream()
                 val request = readLine(inp) ?: return
                 var range: String? = null
+                var bodyLen = 0L
                 while (true) {
                     val h = readLine(inp) ?: break
                     if (h.isEmpty()) break
                     if (h.startsWith("range:", ignoreCase = true)) range = h.substringAfter(':').trim()
+                    if (h.startsWith("content-length:", ignoreCase = true)) bodyLen = h.substringAfter(':').trim().toLongOrNull() ?: 0
                 }
                 val parts = request.split(" ")
                 if (parts.size < 2) return
@@ -64,7 +66,8 @@ class HttpServer(private val port: Int) {
                 val path = parts[1].substringBefore('?')
                 val query = parts[1].substringAfter('?', "")
                 if (path == "/p") { proxy(out, method, query, range); return }
-                val uri = if (path == "/sub") Hub.subUri else {
+                if (path == "/festa" || path.startsWith("/festa/")) { Party.handle(out, method, path, query, inp, bodyLen); return }
+                val uri = if (path == "/sub") Hub.subUri else if (path.startsWith("/f/")) Party.fileUri(path.removePrefix("/f/")) else {
                     val idx = path.removePrefix("/m/").toIntOrNull()
                     idx?.let { Hub.tracks.getOrNull(it) }?.uri
                 }
@@ -74,7 +77,7 @@ class HttpServer(private val port: Int) {
                 }
                 val cr = Hub.app.contentResolver
                 val size = fileSize(uri)
-                val mime = cr.getType(uri) ?: "audio/mpeg"
+                val mime = cr.getType(uri) ?: Party.mimeOf(uri.lastPathSegment ?: "")
 
                 var start = 0L
                 var end = if (size > 0) size - 1 else -1L
@@ -142,7 +145,7 @@ class HttpServer(private val port: Int) {
     private fun proxy(out: OutputStream, method: String, query: String, range: String?) {
         val target = param(query, "u")
         if (target == null) { writeHead(out, "400 Bad Request", "text/plain", 0, null); return }
-        val headers = Hub.current?.headers ?: emptyMap()
+        val headers = Hub.headersFor(target)
         var conn: java.net.HttpURLConnection? = null
         try {
             conn = java.net.URL(target).openConnection() as java.net.HttpURLConnection
@@ -205,11 +208,13 @@ class HttpServer(private val port: Int) {
         return -1
     }
 
-    private fun writeHead(out: OutputStream, status: String, mime: String, length: Long, contentRange: String?) {
+    fun writeHead(out: OutputStream, status: String, mime: String, length: Long, contentRange: String?) {
         val sb = StringBuilder()
         sb.append("HTTP/1.1 ").append(status).append("\r\n")
         sb.append("Content-Type: ").append(mime).append("\r\n")
         sb.append("Accept-Ranges: bytes\r\n")
+        // Chromecast precisa disso pra abrir listas (m3u8) do celular
+        sb.append("Access-Control-Allow-Origin: *\r\n")
         if (length >= 0) sb.append("Content-Length: ").append(length).append("\r\n")
         if (contentRange != null) sb.append("Content-Range: ").append(contentRange).append("\r\n")
         sb.append("Connection: close\r\n\r\n")

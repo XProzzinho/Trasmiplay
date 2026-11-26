@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Festa · Transmiplay</title>
+<style>
+  :root{--ink:#0F172A;--soft:#64748B;--blue:#2563EB;--line:#DCE6F5;--card:#fff;--bg:#F1F6FD}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,Roboto,sans-serif;color:var(--ink);
+    background:linear-gradient(#F7FAFE,#E6EFFB);min-height:100vh}
+  main{max-width:520px;margin:0 auto;padding:20px 16px 40px}
+  h1{font-size:24px;margin:6px 0 2px}
+  .sub{color:var(--soft);font-size:14px;margin-bottom:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:14px}
+  .now{display:flex;gap:14px;align-items:center}
+  .eq{width:44px;height:44px;border-radius:50%;background:var(--blue);display:flex;align-items:flex-end;justify-content:center;gap:3px;padding:12px 0}
+  .eq i{width:4px;background:#fff;border-radius:2px;animation:b 1s infinite ease-in-out}
+  .eq i:nth-child(2){animation-delay:.2s}.eq i:nth-child(3){animation-delay:.4s}
+  @keyframes b{0%,100%{height:6px}50%{height:20px}}
+  .paused .eq i{animation:none;height:8px}
+  .label{font-size:12px;color:var(--soft)}
+  .title{font-weight:700;font-size:16px}
+  input{width:100%;font-size:16px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:#F8FAFC;color:var(--ink)}
+  button,.file{display:block;width:100%;margin-top:10px;font-size:16px;font-weight:700;padding:13px;border:0;border-radius:24px;
+    background:linear-gradient(90deg,#2563EB,#3B82F6);color:#fff;text-align:center;cursor:pointer}
+  .file{background:#fff;color:var(--ink);border:1px solid var(--line)}
+  .file input{display:none}
+  .q{list-style:none;margin:0;padding:0}
+  .q li{padding:10px 0;border-top:1px solid var(--line);display:flex;gap:10px}
+  .q li:first-child{border-top:0}
+  .n{color:var(--blue);font-weight:700;min-width:20px}
+  .by{color:var(--soft);font-size:12px}
+  .msg{font-size:14px;margin-top:10px;min-height:18px}
+  .ok{color:#047857}.err{color:#B91C1C}
+  progress{width:100%;height:8px;margin-top:10px;display:none}
+  .off{text-align:center;padding:40px 10px;color:var(--soft)}
+</style>
+</head>
+<body>
+<main>
+  <h1>🎉 Festa</h1>
+  <div class="sub" id="sub">Ponha suas músicas e vídeos na fila das TVs</div>
+
+  <div id="app">
+    <div class="card now" id="nowCard">
+      <div class="eq"><i></i><i></i><i></i></div>
+      <div><div class="label" id="nowLabel">Tocando agora</div><div class="title" id="now">—</div><div class="by" id="nowBy"></div></div>
+    </div>
+
+    <div class="card">
+      <input id="name" placeholder="Seu nome (aparece na fila)" maxlength="30">
+    </div>
+
+    <div class="card">
+      <input id="link" placeholder="Cole um link do YouTube ou de um vídeo" inputmode="url">
+      <button id="add">Pôr na fila</button>
+      <label class="file">📁 Mandar música do meu celular<input type="file" id="file" accept="audio/*,video/*"></label>
+      <progress id="prog" max="100" value="0"></progress>
+      <div class="msg" id="msg"></div>
+    </div>
+
+    <div class="card">
+      <div class="label" style="margin-bottom:6px">A seguir</div>
+      <ul class="q" id="queue"></ul>
+    </div>
+  </div>
+  <div class="off" id="off" style="display:none">O modo festa está desligado no celular de quem está transmitindo.</div>
+</main>
+<script>
+  var $ = function (id) { return document.getElementById(id); };
+  try { $('name').value = localStorage.getItem('nome') || ''; } catch (e) {}
+  $('name').addEventListener('change', function () { try { localStorage.setItem('nome', $('name').value); } catch (e) {} });
+
+  function say(t, ok) { var m = $('msg'); m.textContent = t; m.className = 'msg ' + (ok ? 'ok' : 'err'); }
+  function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+  function refresh() {
+    fetch('/festa/estado').then(function (r) { return r.json(); }).then(function (j) {
+      $('app').style.display = j.on ? '' : 'none';
+      $('off').style.display = j.on ? 'none' : '';
+      if (!j.on) return;
+      $('sub').textContent = 'Tocando nas TVs de ' + j.host + ' · grupo ' + j.group;
+      $('now').textContent = j.now ? j.now.title : 'Nada ainda: ponha a primeira!';
+      $('nowBy').textContent = j.now && j.now.by ? 'pedido por ' + j.now.by : '';
+      $('nowCard').className = 'card now' + (j.now && j.now.playing ? '' : ' paused');
+      var html = '';
+      (j.queue || []).forEach(function (it, i) {
+        html += '<li><span class="n">' + (i + 1) + '</span><div><div>' + esc(it.title) + '</div>' +
+          (it.by ? '<div class="by">por ' + esc(it.by) + '</div>' : '') + '</div></li>';
+      });
+      $('queue').innerHTML = html || '<li class="by">A fila está vazia.</li>';
+    }).catch(function () {});
+  }
+
+  $('add').onclick = function () {
+    var u = $('link').value.trim();
+    if (!/^https?:\/\//.test(u)) { say('Cole um link que comece com http', false); return; }
+    var body = 'u=' + encodeURIComponent(u) + '&n=' + encodeURIComponent($('name').value);
+    fetch('/festa/link', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { if (j.ok) { say('Na fila: ' + j.title, true); $('link').value = ''; refresh(); } else say(j.erro || 'Não deu', false); })
+      .catch(function () { say('Sem conexão com o celular', false); });
+  };
+
+  $('file').onchange = function () {
+    var f = this.files[0]; if (!f) return;
+    if (f.size > 150 * 1024 * 1024) { say('Arquivo grande demais (máximo 150 MB)', false); return; }
+    var x = new XMLHttpRequest();
+    x.open('POST', '/festa/enviar?nome=' + encodeURIComponent(f.name) + '&por=' + encodeURIComponent($('name').value));
+    var p = $('prog'); p.style.display = 'block'; p.value = 0;
+    x.upload.onprogress = function (e) { if (e.lengthComputable) p.value = e.loaded * 100 / e.total; };
+    x.onload = function () {
+      p.style.display = 'none';
+      try { var j = JSON.parse(x.responseText); if (j.ok) { say('Na fila: ' + j.title, true); refresh(); } else say(j.erro, false); }
+      catch (e) { say('Não deu pra mandar', false); }
+    };
+    x.onerror = function () { p.style.display = 'none'; say('O envio falhou', false); };
+    say('Mandando ' + f.name + '…', true);
+    x.send(f);
+    this.value = '';
+  };
+
+  refresh();
+  setInterval(refresh, 3000);
+</script>
+</body>
+</html>

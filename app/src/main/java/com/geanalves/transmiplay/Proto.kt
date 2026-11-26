@@ -6,6 +6,7 @@ object Proto {
     const val CONTROL_PORT = 47801     // TCP: comandos (tocar, pausar, relógio...)
     const val HTTP_PORT = 47802        // HTTP: serve as músicas do celular
     const val AUDIO_PORT = 47803       // TCP: som ao vivo do modo caixinha
+    const val VIDEO_PORT = 47804       // TCP: imagem ao vivo (espelhar a tela)
     const val SAMPLE_RATE = 48000
     const val CHUNK_BYTES = 3840       // 20 ms de áudio estéreo 16 bits a 48 kHz
     const val AUDIO_DELAY_MS = 300     // atraso fixo do modo caixinha (pra todas as TVs juntas)

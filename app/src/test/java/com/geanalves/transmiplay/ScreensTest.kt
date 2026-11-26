@@ -65,6 +65,21 @@ class ScreensTest {
                 "\"found\":[{\"addr\":\"A3\",\"name\":\"Philco PBS50\"}],\"pending\":\"\"}}")
         Thread.sleep(500); idle(300)
         m.invoke(a, 0); idle(300); shot(root, "1b_inicio_caixa")
+        // grupos, Smart TV (DLNA) e modo festa
+        Hub.addGroup("Quarto")
+        Hub.selectGroup("Principal")
+        Hub.moveTv(Hub.tvs.first { it.name == "TV do Quarto" }, "Quarto")
+        Cast.devices += Cast.Dlna("uuid:teste", "Samsung 50\" da Varanda", "http://127.0.0.1:9/ctl")
+        Party.setOn(true)
+        Thread.sleep(300); idle(300)
+        val sel = MainActivity::class.java.getDeclaredMethod("selectSource", Int::class.java).apply { isAccessible = true }
+        sel.invoke(a, 4); idle(300)
+        val pages = MainActivity::class.java.getDeclaredField("pages").apply { isAccessible = true }.get(a) as List<*>
+        val home = pages[0] as android.widget.ScrollView
+        home.scrollTo(0, 600); idle(200); shot(root, "6_festa")
+        home.scrollTo(0, 100000); idle(200); shot(root, "7_grupos")
+        home.scrollTo(0, 0)
+        sel.invoke(a, 4); idle(200)
         val open = MainActivity::class.java.getDeclaredMethod("openSpeaker", Hub.TvConn::class.java).apply { isAccessible = true }
         open.invoke(a, Hub.tvs.first { it.name == "TV da Sala" })
         idle(400)
