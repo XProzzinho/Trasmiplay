@@ -15,6 +15,7 @@ import android.os.PowerManager
 /** Mantém o Transmiplay funcionando mesmo com a tela desligada ou em outro app. */
 class TransmitService : Service() {
     private var wake: PowerManager.WakeLock? = null
+    private var controls: MediaControls? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -27,6 +28,7 @@ class TransmitService : Service() {
         } else startForeground(1, n)
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         wake = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "transmiplay:hub").apply { acquire() }
+        controls = try { MediaControls(this) } catch (_: Exception) { null }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -37,10 +39,12 @@ class TransmitService : Service() {
             stopSelf()
             android.os.Process.killProcess(android.os.Process.myPid())
         }
+        controls?.handle(intent?.action)
         return START_STICKY
     }
 
     override fun onDestroy() {
+        controls?.release()
         try { wake?.release() } catch (_: Exception) {}
         super.onDestroy()
     }

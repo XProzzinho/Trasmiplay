@@ -1042,6 +1042,7 @@ class BrowserActivity : Activity() {
             val pm = PopupMenu(this, dots)
             pm.menu.add(0, 1, 0, "Transmitir nas TVs")
             pm.menu.add(0, 2, 0, "Transmitir passando pelo celular")
+            pm.menu.add(0, 5, 0, "Pôr na fila (toca depois)")
             pm.menu.add(0, 3, 0, "Copiar link do vídeo")
             pm.menu.add(0, 4, 0, "Remover da lista")
             pm.setOnMenuItemClickListener {
@@ -1054,6 +1055,7 @@ class BrowserActivity : Activity() {
                         toast("Link copiado")
                     }
                     4 -> { tab.videos.remove(v.url); updateFound(); renderVideoList() }
+                    5 -> { Hub.enqueue(itemFor(v)); toast(if (Hub.current != null) "Na fila: ${v.pageTitle}" else "Mandando pras TVs") }
                 }
                 true
             }
@@ -1100,25 +1102,26 @@ class BrowserActivity : Activity() {
         return h
     }
 
+    private fun itemFor(v: Video, forceForward: Boolean? = null): Hub.Item = if (v.ytId != null) {
+        Hub.Item("youtube", v.ytId, v.pageTitle, thumb = v.thumb)
+    } else {
+        val fwd = forceForward ?: (forwardBox?.isChecked ?: WebStore.getFlag(this, "forward", false))
+        Hub.Item(
+            "media", v.url, v.pageTitle,
+            headers = headersFor(v),
+            mime = v.type,
+            proxy = fwd,
+            thumb = v.thumb,
+        )
+    }
+
     private fun cast(v: Video, forceForward: Boolean? = null) {
         if (Hub.tvs.isEmpty()) {
             toast("Nenhuma TV conectada. Abra o Simulplay na TV, no mesmo Wi-Fi.")
             showDevices()
             return
         }
-        val item = if (v.ytId != null) {
-            Hub.Item("youtube", v.ytId, v.pageTitle, thumb = v.thumb)
-        } else {
-            val fwd = forceForward ?: (forwardBox?.isChecked ?: WebStore.getFlag(this, "forward", false))
-            Hub.Item(
-                "media", v.url, v.pageTitle,
-                headers = headersFor(v),
-                mime = v.type,
-                proxy = fwd,
-                thumb = v.thumb,
-            )
-        }
-        Hub.playItem(item)
+        Hub.playItem(itemFor(v, forceForward))
         // pausa o vídeo no celular pra não tocar em dobro
         tab.web.evaluateJavascript("document.querySelectorAll('video,audio').forEach(function(m){try{m.pause()}catch(e){}})", null)
         closeVideoList()

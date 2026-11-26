@@ -82,6 +82,8 @@ class MainActivity : Activity() {
     private lateinit var prevBtn: View
     private lateinit var nextBtn: View
     private lateinit var syncCard: TextView
+    private lateinit var queueBox: LinearLayout
+    private lateinit var recentBox: LinearLayout
     private var dragging = false
     private var thumbUrl: String? = null
     private var speakerDlg: SpeakerDialog? = null
@@ -120,6 +122,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         Hub.listener = { refresh() }
+        Hub.onPlaylist = { url, list -> showChannels(url, list) }
         Updater.listener = { refreshUpdate() }
         refresh()
         refreshUpdate()
@@ -130,6 +133,7 @@ class MainActivity : Activity() {
     override fun onPause() {
         super.onPause()
         Hub.listener = null
+        Hub.onPlaylist = null
         Updater.listener = null
         ui.removeCallbacks(ticker)
     }
@@ -365,7 +369,7 @@ class MainActivity : Activity() {
 
         // painel link
         linkPanel = panel()
-        linkPanel.addView(t("Cole um link do YouTube ou de um vídeo/áudio (mp4, mp3, m3u8)", 13f, Neon.soft))
+        linkPanel.addView(t("Cole um link do YouTube, de um vídeo/áudio (mp4, mp3, m3u8) ou uma lista de canais (.m3u)", 13f, Neon.soft))
         linkInput = EditText(this).apply {
             hint = "https://..."
             setHintTextColor(Neon.soft); setTextColor(Neon.white)
@@ -380,11 +384,16 @@ class MainActivity : Activity() {
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             cm.primaryClip?.getItemAt(0)?.coerceToText(this)?.let { linkInput.setText(it) }
         }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        lr.addView(smallButton("+ Fila") {
+            val u = linkInput.text.toString().trim()
+            if (!u.startsWith("http")) toast("Cole um link que comece com http")
+            else { Hub.playLink(u, queueIt = true); toast(if (Hub.current != null) "Na fila: vai tocar depois do atual" else "Tocando") }
+        }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginStart = d(8) })
         lr.addView(Neon.bigButton(this, "Transmitir", R.drawable.ic_cast) {
             val u = linkInput.text.toString().trim()
             if (!u.startsWith("http")) toast("Cole um link que comece com http")
             else { Hub.playLink(u); selectTab(2) }
-        }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 2f).apply { marginStart = d(10) })
+        }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 2f).apply { marginStart = d(8) })
         linkPanel.addView(lr)
         c.addView(linkPanel)
 
@@ -405,6 +414,10 @@ class MainActivity : Activity() {
             setPadding(0, d(8), 0, 0)
         })
         c.addView(boxPanel)
+
+        // continuar assistindo
+        recentBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        c.addView(recentBox)
 
         // TVs
         c.addView(section("Televisões encontradas", Neon.icon(this, R.drawable.ic_refresh, Neon.lilac, 6) {
@@ -573,6 +586,10 @@ class MainActivity : Activity() {
         ctl(R.drawable.ic_stop, "Parar") { Hub.stopAll(); CaptureService.stop(this) }
         ctrlActive.addView(btns, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
+        // a seguir (fila)
+        queueBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        ctrlActive.addView(queueBox, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+
         syncCard = t("", 13f, Color.parseColor("#0E7490"), true).apply {
             setOnClickListener { showMicSync() }
             gravity = Gravity.CENTER
@@ -618,6 +635,8 @@ class MainActivity : Activity() {
         c.addView(section("Transmissão"))
         val prefs = getSharedPreferences("transmiplay", MODE_PRIVATE)
         c.addView(toggleRow("Sincronização Automática", "Mantém todos os dispositivos no mesmo ponto", Hub.autoSync) { Hub.setAutoSync(it) })
+        c.addView(toggleRow("Abrir o Simulplay quando a TV ligar", "A TV já fica pronta pra receber (algumas TVs não deixam)",
+            Hub.bootStart) { Hub.setBootStart(it) })
         c.addView(toggleRow("Bloquear propagandas", "No navegador, bloqueia anúncios conhecidos",
             WebStore.getFlag(this, "block_ads", true)) { WebStore.setFlag(this, "block_ads", it) })
         c.addView(toggleRow("Bloquear pop-ups", "Impede sites de abrir janelas sozinhos",
@@ -651,6 +670,9 @@ class MainActivity : Activity() {
                 "• Abra o Simulplay em cada TV, no mesmo Wi-Fi do celular.\n" +
                     "• As TVs aparecem sozinhas em Início → Televisões encontradas.\n" +
                     "• Se uma TV ficar adiantada ou atrasada, use Ajustar atraso das TVs.\n" +
+                    "• Os botões de volume do celular mudam o volume das TVs enquanto transmite. O volume e o nome de cada TV ficam no ícone de caixa de som dela.\n" +
+                    "• No controle da TV: OK pausa, ◀ ▶ voltam e avançam 10 s, canal +/− passa pra próxima.\n" +
+                    "• Use \"+ Fila\" pra deixar vídeos e links esperando a vez.\n" +
                     "• Se a TV não abrir o vídeo de um site, marque \"Encaminhar o vídeo através do telefone\" na Lista de vídeo.\n" +
                     "• Redes de convidados costumam bloquear os aparelhos de se verem: use a rede principal.")
         })
@@ -792,9 +814,11 @@ class MainActivity : Activity() {
             }
             syncCard.text = if (Hub.autoSync) "●  Sincronizado em todas as TVs" else "●  Sincronização automática desligada"
         }
-        val hasList = cur != null && Hub.currentIndex >= 0 && Hub.tracks.size > 1
+        val hasList = cur != null && ((Hub.currentIndex >= 0 && Hub.tracks.size > 1) || Hub.queue.isNotEmpty())
         prevBtn.visibility = if (hasList) View.VISIBLE else View.GONE
         nextBtn.visibility = if (hasList) View.VISIBLE else View.GONE
+        renderQueue()
+        renderRecents()
 
         if (::versionText.isInitialized) versionText.text = "Você está na versão ${versionName()}"
         Hub.lastError?.let { toast(it); Hub.lastError = null }
@@ -860,6 +884,7 @@ class MainActivity : Activity() {
         val st = android.text.SpannableStringBuilder("● ").apply {
             setSpan(android.text.style.ForegroundColorSpan(if (tv.enabled) Neon.green else Neon.soft), 0, 1, 0)
             append(if (tv.enabled) "Conectada$adj" else "Fora desta transmissão")
+            if (tv.muted) append(" · sem som") else if (tv.vol < 100) append(" · volume ${tv.vol}%")
             tv.btState?.optJSONArray("connected")?.optJSONObject(0)?.optString("name")?.let { append(" · caixa: $it") }
         }
         col.addView(t(st, 12f, if (tv.enabled) Color.parseColor("#0E7490") else Neon.soft))
@@ -873,6 +898,107 @@ class MainActivity : Activity() {
         r.setOnClickListener { adjustDialog(tv) }
         r.layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = d(8) }
         return r
+    }
+
+    // ================================================================== fila, recentes e canais
+
+    private fun miniRow(title: String, sub: String, ic: Int, onTap: () -> Unit, onClose: (() -> Unit)?): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            background = Neon.cardBg(this@MainActivity, Neon.card, 14, Neon.stroke, 1)
+            setPadding(d(12), d(8), d(4), d(8))
+            setOnClickListener { onTap() }
+        }
+        row.addView(Neon.icon(this, ic, Neon.purple, 4), LinearLayout.LayoutParams(d(28), d(28)))
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(d(10), 0, d(4), 0) }
+        col.addView(t(title, 14f, Neon.white, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
+        if (sub.isNotBlank()) col.addView(t(sub, 12f, Neon.soft).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
+        row.addView(col, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        if (onClose != null) row.addView(Neon.icon(this, R.drawable.ic_close, Neon.soft, 8) { onClose() }, LinearLayout.LayoutParams(d(36), d(36)))
+        row.layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = d(6) }
+        return row
+    }
+
+    private fun renderQueue() {
+        if (!::queueBox.isInitialized) return
+        queueBox.removeAllViews()
+        val q = Hub.queue.toList()
+        if (q.isEmpty()) return
+        queueBox.addView(section("A seguir (${q.size})", t("Limpar", 13f, Neon.purple, true).apply {
+            setPadding(d(8), d(6), d(4), d(6)); setOnClickListener { Hub.clearQueue() }
+        }))
+        q.forEachIndexed { i, it ->
+            val sub = when { it.kind == "youtube" -> "YouTube"; it.mime != null -> it.mime.uppercase(); else -> "Link" }
+            queueBox.addView(miniRow("${i + 1}. ${it.title}", sub, R.drawable.ic_play, { Hub.playQueued(i) }, { Hub.removeQueued(i) }))
+        }
+    }
+
+    private var recentsKey = ""
+    private fun renderRecents() {
+        if (!::recentBox.isInitialized) return
+        val list = Hub.recents().take(5)
+        val key = list.joinToString { it.url + it.pos / 10000 }
+        if (key == recentsKey) return
+        recentsKey = key
+        recentBox.removeAllViews()
+        if (list.isEmpty()) return
+        recentBox.addView(section("Continuar assistindo"))
+        for (r in list) {
+            val sub = when {
+                r.kind == "iptv" -> "Abrir a lista de canais"
+                r.pos > 10_000 && (r.dur == 0L || r.pos < r.dur - 20_000) ->
+                    (if (r.kind == "youtube") "YouTube · " else "") + "parou em ${fmt(r.pos)}" + (if (r.dur > 0) " de ${fmt(r.dur)}" else "")
+                r.kind == "youtube" -> "YouTube"
+                else -> "Assistir de novo"
+            }
+            val row = miniRow(r.title, sub, if (r.kind == "iptv") R.drawable.ic_tv else R.drawable.ic_history,
+                { Hub.playRecent(r); if (r.kind != "iptv") selectTab(2) }, { Hub.removeRecent(r.url) })
+            row.setOnLongClickListener { Hub.playRecent(r, fromStart = true); selectTab(2); toast("Do começo"); true }
+            recentBox.addView(row)
+        }
+    }
+
+    /** lista de canais (IPTV): procurar, tocar ou pôr na fila */
+    private fun showChannels(url: String, list: List<Iptv.Channel>) {
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(d(16), d(4), d(16), d(8)) }
+        val search = EditText(this).apply {
+            hint = "Procurar canal ou grupo"; isSingleLine = true
+            setHintTextColor(Neon.soft); setTextColor(Neon.white)
+            background = Neon.cardBg(this@MainActivity, Color.parseColor("#F8FAFC"), 12)
+            setPadding(d(12), d(10), d(12), d(10))
+        }
+        box.addView(search, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = d(8) })
+        val rows = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val scroll = ScrollView(this).apply { addView(rows) }
+        box.addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, (resources.displayMetrics.heightPixels * 0.55).toInt()))
+        var dlg: AlertDialog? = null
+        fun render(q: String) {
+            rows.removeAllViews()
+            val f = list.filter { q.isBlank() || it.name.contains(q, true) || (it.group?.contains(q, true) == true) }
+            for (ch in f.take(300)) {
+                val row = miniRow(ch.name, ch.group ?: "", R.drawable.ic_tv, {
+                    Hub.playItem(Iptv.toItem(ch)); dlg?.dismiss(); selectTab(2)
+                }, null)
+                (row as LinearLayout).addView(t("+ Fila", 13f, Neon.purple, true).apply {
+                    setPadding(d(10), d(8), d(10), d(8))
+                    setOnClickListener { Hub.enqueue(Iptv.toItem(ch)); toast("Na fila: ${ch.name}") }
+                })
+                rows.addView(row)
+            }
+            if (f.size > 300) rows.addView(t("Mostrando 300 de ${f.size}. Procure pelo nome pra achar os outros.", 12f, Neon.soft))
+            if (f.isEmpty()) rows.addView(t("Nenhum canal com esse nome.", 13f, Neon.soft))
+        }
+        search.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(e: android.text.Editable?) { render(e?.toString() ?: "") }
+            override fun beforeTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
+            override fun onTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
+        })
+        render("")
+        dlg = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
+            .setTitle("Canais (${list.size})")
+            .setView(box)
+            .setNegativeButton("Fechar", null)
+            .show()
     }
 
     private fun updateProgress() {

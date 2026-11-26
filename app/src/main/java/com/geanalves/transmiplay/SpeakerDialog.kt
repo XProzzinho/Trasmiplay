@@ -29,12 +29,68 @@ class SpeakerDialog(private val act: Activity, private val tv: Hub.TvConn) {
         render()
         dialog = AlertDialog.Builder(act, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
             .setTitle("Caixa de som · ${tv.name}")
-            .setView(ScrollView(act).apply { addView(body) })
+            .setView(ScrollView(act).apply {
+                addView(LinearLayout(act).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(volumeHeader())
+                    addView(body)
+                })
+            })
             .setPositiveButton("Fechar", null)
             .setOnDismissListener { isOpen = false }
             .create()
         isOpen = true
         dialog?.show()
+    }
+
+    /** volume e nome da TV (fica fora do render pra não pular enquanto arrasta) */
+    private fun volumeHeader(): View {
+        val box = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL; setPadding(d(20), d(10), d(20), d(4)) }
+        val label = t("", 14f, Neon.white, true)
+        fun paint() { label.text = if (tv.muted) "Volume da TV: sem som" else "Volume da TV: ${tv.vol}%" }
+        paint()
+        val row = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val mute = button(if (tv.muted) "Ligar som" else "Mudo") {}
+        val bar = android.widget.SeekBar(act).apply {
+            max = 100; progress = tv.vol
+            progressTintList = android.content.res.ColorStateList.valueOf(Neon.purple)
+            thumbTintList = android.content.res.ColorStateList.valueOf(Neon.purple)
+            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: android.widget.SeekBar?, p: Int, fromUser: Boolean) {
+                    if (fromUser) { tv.setVol(p, false); paint(); mute.text = "Mudo" }
+                }
+                override fun onStartTrackingTouch(sb: android.widget.SeekBar?) {}
+                override fun onStopTrackingTouch(sb: android.widget.SeekBar?) {}
+            })
+        }
+        mute.setOnClickListener { tv.setVol(tv.vol, !tv.muted); paint(); mute.text = if (tv.muted) "Ligar som" else "Mudo" }
+        row.addView(bar, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        row.addView(mute)
+        box.addView(label)
+        box.addView(row, lp(top = 6))
+        box.addView(t("Renomear esta TV", 13f, Neon.purple, true).apply {
+            setPadding(0, d(10), 0, d(4))
+            setOnClickListener { renameDialog() }
+        })
+        box.addView(View(act).apply { setBackgroundColor(Neon.stroke) }, LinearLayout.LayoutParams(MATCH_PARENT, d(1)).apply { topMargin = d(8) })
+        return box
+    }
+
+    private fun renameDialog() {
+        val input = android.widget.EditText(act).apply {
+            setText(tv.name); setSelection(text.length); isSingleLine = true
+            setTextColor(Neon.white)
+        }
+        AlertDialog.Builder(act, android.R.style.Theme_DeviceDefault_Light_Dialog_Alert)
+            .setTitle("Nome da TV")
+            .setMessage("Ex.: TV da sala, TV do quarto")
+            .setView(android.widget.FrameLayout(act).apply { setPadding(d(20), 0, d(20), 0); addView(input) })
+            .setPositiveButton("Salvar") { _, _ ->
+                tv.rename(input.text.toString())
+                dialog?.setTitle("Caixa de som · ${tv.name}")
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
     }
 
     fun render() {

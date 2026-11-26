@@ -52,6 +52,10 @@ object Hub {
 
     val tvs = CopyOnWriteArrayList<TvConn>()
     val tracks = CopyOnWriteArrayList<Item>()
+    /** fila "a seguir" (links, vídeos do navegador, canais) */
+    val queue = CopyOnWriteArrayList<Item>()
+    /** lista de canais (IPTV) que acabou de abrir: a tela mostra pra escolher */
+    var onPlaylist: ((String, List<Iptv.Channel>) -> Unit)? = null
     private val audioSinks = CopyOnWriteArrayList<AudioSink>()
 
     @Volatile var current: Item? = null; private set
@@ -76,13 +80,17 @@ object Hub {
 
     fun setQuality(q: Int) { prefs().edit().putInt("quality", q).apply(); sendAll(cfgMsg()) }
     fun setAutoSync(on: Boolean) { prefs().edit().putBoolean("auto_sync", on).apply(); sendAll(cfgMsg()) }
-    private fun cfgMsg() = JSONObject().put("t", "cfg").put("quality", quality).put("sync", autoSync)
+    val bootStart: Boolean get() = prefs().getBoolean("boot_start", true)
+    fun setBootStart(on: Boolean) { prefs().edit().putBoolean("boot_start", on).apply(); sendAll(cfgMsg()) }
+    private fun cfgMsg() = JSONObject().put("t", "cfg").put("quality", quality).put("sync", autoSync).put("boot", bootStart)
 
     fun skip(deltaMs: Long) = seek((position() + deltaMs).coerceAtLeast(0))
     val activeTvs: Int get() = tvs.count { it.enabled }
 
     var listener: (() -> Unit)? = null
-    fun notifyUi() = main.post { listener?.invoke() }
+    /** outros que querem saber das mudanças (notificação, tela de bloqueio) */
+    val watchers = CopyOnWriteArrayList<() -> Unit>()
+    fun notifyUi() = main.post { listener?.invoke(); watchers.forEach { it() } }
 
     private var controlServer: ServerSocket? = null
     private var audioServer: ServerSocket? = null
@@ -146,6 +154,7 @@ object Hub {
         }
         tickCount++
         if (tickCount % 2 == 0 && cur != null) sendAll(stateMsg())
+        if (tickCount % 20 == 0 && cur != null && playing) savePos()
     }
 
     // ---------------------------------------------------------------- descoberta
@@ -218,6 +227,31 @@ object Hub {
         /** caixa de som Bluetooth dessa TV (o que a TV contou por último) */
         @Volatile var btState: JSONObject? = null
         @Volatile var btMsg: String = ""
+        /** volume dessa TV (0 a 100) */
+        @Volatile var vol: Int = 100
+        @Volatile var muted: Boolean = false
+        fun setVol(v: Int, mute: Boolean = muted) {
+            vol = v.coerceIn(0, 100); muted = mute
+            prefs().edit().putInt("vol_$name", vol).putBoolean("mute_$name", muted).apply()
+            send(volMsg())
+            notifyUi()
+        }
+        private fun volMsg() = JSONObject().put("t", "vol").put("v", vol).put("mute", muted)
+
+        /** troca o nome da TV (aparece no celular e na própria TV) */
+        fun rename(newName: String) {
+            val n = newName.trim().take(40)
+            if (n.isBlank() || n == name) return
+            val p = prefs(); val e = p.edit()
+            for (k in listOf("adj_", "on_", "vol_", "mute_")) {
+                val old = p.all["$k$name"] ?: continue
+                when (old) { is Int -> e.putInt("$k$n", old); is Boolean -> e.putBoolean("$k$n", old) }
+            }
+            e.apply()
+            name = n
+            send(JSONObject().put("t", "name").put("name", n))
+            notifyUi()
+        }
 
         fun bt(op: String, addr: String = "") = send(JSONObject().put("t", "bt").put("op", op).put("addr", addr))
         private val out: OutputStream = socket.getOutputStream()
@@ -244,7 +278,10 @@ object Hub {
                             name = j.optString("name", name)
                             adj = prefs().getInt("adj_$name", 0)
                             enabled = prefs().getBoolean("on_$name", true)
+                            vol = prefs().getInt("vol_$name", 100)
+                            muted = prefs().getBoolean("mute_$name", false)
                             send(JSONObject().put("t", "adj").put("ms", adj))
+                            send(volMsg())
                             send(cfgMsg())
                             if (enabled) {
                                 current?.let { send(loadMsg(it)); send(stateMsg()) }
@@ -255,6 +292,14 @@ object Hub {
                         "info" -> onInfo(j.optInt("id"), j.optLong("dur"))
                         "ended" -> onEnded(j.optInt("id"))
                         "error" -> onTvError(this, j)
+                        // controle remoto da TV
+                        "key" -> when (j.optString("k")) {
+                            "toggle" -> togglePlay()
+                            "fwd" -> skip(10_000)
+                            "back" -> skip(-10_000)
+                            "next" -> next()
+                            "prev" -> prev()
+                        }
                         "bt" -> {
                             j.optJSONObject("state")?.let { btState = it }
                             if (j.has("msg")) btMsg = j.optString("msg")
@@ -318,13 +363,106 @@ object Hub {
 
     private fun runOnWorker(r: () -> Unit) = worker.post(r)
 
-    fun playLink(raw: String) = runOnWorker {
+    fun playLink(raw: String, queueIt: Boolean = false) = runOnWorker {
         val url = raw.trim()
         val yt = youtubeId(url)
-        val item = if (yt != null) Item("youtube", yt, "YouTube")
-        else Item("media", url, Uri.parse(url).lastPathSegment?.take(60) ?: url)
-        load(item, -1)
+        if (yt == null && Iptv.maybeList(url)) {
+            // pode ser uma lista de canais (IPTV): baixa e mostra os canais
+            thread(isDaemon = true) {
+                val list = Iptv.fetch(url)
+                if (list.size > 1) {
+                    rememberList(url, list.size)
+                    main.post { onPlaylist?.invoke(url, list) }
+                } else runOnWorker { startOrQueue(linkItem(url), queueIt) }
+            }
+            return@runOnWorker
+        }
+        startOrQueue(if (yt != null) Item("youtube", yt, "YouTube") else linkItem(url), queueIt)
     }
+
+    private fun linkItem(url: String) = Item("media", url, Uri.parse(url).lastPathSegment?.take(60) ?: url,
+        mime = if (url.substringBefore('?').endsWith(".m3u8")) "m3u8" else null)
+
+    private fun startOrQueue(item: Item, queueIt: Boolean) {
+        if (queueIt && (current != null || caixinha)) { queue += item; notifyUi() } else load(item, -1)
+    }
+
+    // ---------------------------------------------------------------- fila
+
+    /** põe na fila (se nada estiver tocando, já começa) */
+    fun enqueue(item: Item) = runOnWorker { startOrQueue(item, true) }
+    fun removeQueued(i: Int) = runOnWorker { if (i in queue.indices) { queue.removeAt(i); notifyUi() } }
+    fun playQueued(i: Int) = runOnWorker { if (i in queue.indices) load(queue.removeAt(i), -1) }
+    fun clearQueue() = runOnWorker { queue.clear(); notifyUi() }
+    fun hasNext(): Boolean = (currentIndex >= 0 && currentIndex + 1 < tracks.size) || queue.isNotEmpty()
+
+    // ---------------------------------------------------------------- recentes (continuar de onde parou)
+
+    data class Recent(val j: JSONObject) {
+        val title: String get() = j.optString("title")
+        val kind: String get() = j.optString("kind")
+        val pos: Long get() = j.optLong("pos")
+        val dur: Long get() = j.optLong("dur")
+        val thumb: String? get() = j.optString("thumb").takeIf { it.isNotBlank() }
+        val url: String get() = j.optString("url")
+    }
+
+    fun recents(): List<Recent> = try {
+        val a = org.json.JSONArray(prefs().getString("recents", "[]"))
+        (0 until a.length()).map { Recent(a.getJSONObject(it)) }
+    } catch (_: Exception) { emptyList() }
+
+    private fun saveRecents(l: List<JSONObject>) {
+        prefs().edit().putString("recents", org.json.JSONArray(l.take(12)).toString()).apply()
+    }
+
+    private fun remember(it: Item) {
+        if (it.uri != null) return // música do celular já fica na lista dela
+        val j = JSONObject().put("kind", it.kind).put("url", it.url).put("title", it.title)
+            .put("proxy", it.proxy).put("pos", 0).put("dur", it.durMs).put("at", System.currentTimeMillis())
+        it.mime?.let { m -> j.put("mime", m) }
+        it.thumb?.let { t -> j.put("thumb", t) }
+        if (it.headers.isNotEmpty()) j.put("headers", JSONObject(it.headers))
+        saveRecents(listOf(j) + recents().map { r -> r.j }.filter { r -> r.optString("url") != it.url })
+    }
+
+    private fun rememberList(url: String, n: Int) {
+        val j = JSONObject().put("kind", "iptv").put("url", url).put("title", "Lista de canais · $n canais")
+            .put("at", System.currentTimeMillis())
+        saveRecents(listOf(j) + recents().map { r -> r.j }.filter { r -> r.optString("url") != url })
+    }
+
+    /** guarda onde parou o que está tocando */
+    private fun savePos() {
+        val cur = current ?: return
+        if (cur.uri != null) return
+        val l = recents().map { it.j }
+        l.firstOrNull { it.optString("url") == cur.url }?.let {
+            it.put("pos", position()).put("dur", cur.durMs)
+            saveRecents(l)
+        }
+    }
+
+    fun removeRecent(url: String) = runOnWorker {
+        saveRecents(recents().map { it.j }.filter { it.optString("url") != url }); notifyUi()
+    }
+
+    fun playRecent(r: Recent, fromStart: Boolean = false) = runOnWorker {
+        if (r.kind == "iptv") { playLink(r.url); return@runOnWorker }
+        val h = r.j.optJSONObject("headers")
+        val headers = h?.keys()?.asSequence()?.associateWith { k -> h.optString(k) } ?: emptyMap()
+        val item = Item(r.kind, r.url, r.title, headers = headers, mime = r.j.optString("mime").takeIf { it.isNotBlank() },
+            proxy = r.j.optBoolean("proxy"), thumb = r.thumb, durMs = r.dur)
+        val resume = !fromStart && r.pos > 10_000 && (r.dur == 0L || r.pos < r.dur - 20_000)
+        load(item, -1, if (resume) r.pos - 3000 else 0)
+    }
+
+    // ---------------------------------------------------------------- volume de todas
+
+    /** volume médio das TVs ligadas (pros botões de volume do celular) */
+    val masterVol: Int get() = tvs.filter { it.enabled }.map { it.vol }.takeIf { it.isNotEmpty() }?.average()?.toInt() ?: 100
+    fun volAll(delta: Int) = tvs.forEach { if (it.enabled) it.setVol(it.vol + delta, false) }
+    fun setVolAll(v: Int) = tvs.forEach { if (it.enabled) it.setVol(v, false) }
 
     /** vídeo achado no navegador */
     fun playItem(item: Item) = runOnWorker {
@@ -357,16 +495,18 @@ object Hub {
         }
     }
 
-    private fun load(item: Item, index: Int) {
+    private fun load(item: Item, index: Int, startPos: Long = 0) {
         if (caixinha) CaptureService.stop(app)
+        savePos()
         sessionId++
         val sid = sessionId
         current = item
         currentIndex = index
         playing = false
-        basePos = 0
+        basePos = startPos
         baseAt = now()
         endedHandled = false
+        if (!item.proxy || recents().none { it.url == item.url }) remember(item)
         sendAll(loadMsg(item))
         sendAll(stateMsg())
         notifyUi()
@@ -391,6 +531,7 @@ object Hub {
     private fun doPause() {
         basePos = position()
         playing = false
+        savePos()
         baseAt = now()
         sendAll(stateMsg())
         notifyUi()
@@ -407,6 +548,7 @@ object Hub {
 
     fun next() = runOnWorker {
         if (currentIndex >= 0 && currentIndex + 1 < tracks.size) playTrack(currentIndex + 1)
+        else if (queue.isNotEmpty()) load(queue.removeAt(0), -1)
     }
 
     fun prev() = runOnWorker {
@@ -414,6 +556,7 @@ object Hub {
     }
 
     fun stopAll() = runOnWorker {
+        savePos()
         current = null
         currentIndex = -1
         playing = false
@@ -458,6 +601,7 @@ object Hub {
         if (id != sessionId || endedHandled || !playing) return@runOnWorker
         endedHandled = true
         if (currentIndex >= 0 && currentIndex + 1 < tracks.size) playTrack(currentIndex + 1)
+        else if (queue.isNotEmpty()) load(queue.removeAt(0), -1)
         else {
             basePos = current?.durMs ?: position()
             playing = false
