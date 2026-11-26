@@ -21,6 +21,31 @@ object Party {
     val group: String get() = prefs().getString("party_group", null)?.takeIf { it in Hub.groups } ?: Hub.active.group
     @Volatile var added = 0; private set
 
+    /** estilos da tela de festa na TV: chave, nome, descrição */
+    val STYLES = listOf(
+        Triple("luzes", "Show de luzes", "Palco escuro, luzes coloridas e confete"),
+        Triple("neon", "Neon roxo", "Laser roxo e ciano, bordas brilhando"),
+        Triple("laser", "Laser verde", "Estilo balada eletrônica, painel de DJ"),
+        Triple("claro", "Claro", "Branco e azul, igual ao app"),
+    )
+    val style: String get() = prefs().getString("party_style", "luzes") ?: "luzes"
+    fun setStyle(s: String) {
+        prefs().edit().putString("party_style", s).apply()
+        Thread { try { pushToTvs() } catch (_: Exception) {} }.start()
+        Hub.notifyUi()
+    }
+
+    /** amostra de cor de cada estilo (pros botões de escolher) */
+    fun swatch(key: String, r: Float): android.graphics.drawable.GradientDrawable {
+        val c = when (key) {
+            "neon" -> intArrayOf(0xFF0B0418.toInt(), 0xFFA855F7.toInt(), 0xFF22D3EE.toInt())
+            "laser" -> intArrayOf(0xFF030805.toInt(), 0xFF16A34A.toInt(), 0xFF4ADE80.toInt())
+            "claro" -> intArrayOf(0xFFF7FAFE.toInt(), 0xFFDBEAFE.toInt(), 0xFF2563EB.toInt())
+            else -> intArrayOf(0xFF050816.toInt(), 0xFFEC4899.toInt(), 0xFF3B82F6.toInt())
+        }
+        return android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TL_BR, c).apply { cornerRadius = r }
+    }
+
     fun setOn(v: Boolean) {
         prefs().edit().putBoolean("party_on", v).putString("party_group", Hub.active.group).apply()
         if (!v) dir().listFiles()?.forEach { f -> if (Hub.allSessions().none { it.current?.url?.endsWith(f.name) == true }) f.delete() }
@@ -164,7 +189,7 @@ object Party {
             JSONObject().put("seq", seq).put("title", it.title).put("by", it.by ?: "")
                 .put("idx", newIdx).put("in", newIn).put("now", playingNew)
         }
-        Hub.sendToGroup(g, JSONObject().put("t", "party").put("on", true).put("url", url() ?: "").put("new", news)
+        Hub.sendToGroup(g, JSONObject().put("t", "party").put("on", true).put("url", url() ?: "").put("new", news).put("style", style)
             .put("now", cur?.let { JSONObject().put("title", it.title).put("by", it.by ?: "") })
             .put("items", items).put("count", s.queue.size).put("left", total))
     }

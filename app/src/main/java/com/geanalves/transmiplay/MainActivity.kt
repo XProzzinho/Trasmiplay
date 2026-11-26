@@ -71,6 +71,7 @@ class MainActivity : Activity() {
     private lateinit var ctrlTitle: TextView
     private var wantMirror = false
     private var partyKey = ""
+    private var styleRowsRefresh: (() -> Unit)? = null
     private lateinit var linkInput: EditText
     private lateinit var trackBox: LinearLayout
     private lateinit var boxButton: LinearLayout
@@ -675,6 +676,29 @@ class MainActivity : Activity() {
         qualityRadios = radios
         c.addView(qBox)
 
+        // estilo da tela de festa na TV
+        c.addView(section("Estilo da festa na TV"))
+        val sBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = Neon.cardBg(this@MainActivity) }
+        val styleRadios = mutableListOf<Neon.Radio>()
+        Party.STYLES.forEachIndexed { i, (key, name, sub) ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                setPadding(d(14), d(14), d(14), d(14))
+                setOnClickListener { Party.setStyle(key); styleRadios.forEachIndexed { k, r -> r.checked = k == i }; partyKey = "" }
+            }
+            val r = Neon.Radio(this).apply { checked = Party.style == key }
+            styleRadios += r
+            row.addView(r, LinearLayout.LayoutParams(d(24), d(24)))
+            val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(d(16), 0, 0, 0) }
+            col.addView(t(name, 15f)); col.addView(t(sub, 12f, Neon.soft))
+            row.addView(col, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+            row.addView(View(this).apply { background = Party.swatch(key, d(10).toFloat()) }, LinearLayout.LayoutParams(d(56), d(32)))
+            sBox.addView(row)
+            if (i < Party.STYLES.size - 1) sBox.addView(divider())
+        }
+        styleRowsRefresh = { styleRadios.forEachIndexed { k, r -> r.checked = Party.STYLES[k].first == Party.style } }
+        c.addView(sBox)
+
         c.addView(section("Transmissão"))
         val prefs = getSharedPreferences("transmiplay", MODE_PRIVATE)
         c.addView(toggleRow("Sincronização Automática", "Mantém todos no mesmo ponto. Com uma TV só fica desligada sozinha (toca liso)", Hub.autoSync) { Hub.setAutoSync(it) })
@@ -1060,7 +1084,7 @@ class MainActivity : Activity() {
     private fun renderParty() {
         if (!::partyBox.isInitialized) return
         val url = Party.url()
-        val key = "${Party.on}|$url|${Party.added}|${Party.group}"
+        val key = "${Party.on}|$url|${Party.added}|${Party.group}|${Party.style}"
         if (key == partyKey) return
         partyKey = key
         partyBox.removeAllViews()
@@ -1074,6 +1098,23 @@ class MainActivity : Activity() {
             partyBox.addView(t("Tocando no grupo ${Party.group}" + if (Party.added > 0) " · ${Party.added} pedidos" else "", 12f, Neon.soft).apply {
                 gravity = Gravity.CENTER; setPadding(0, d(4), 0, 0)
             }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            partyBox.addView(t("Estilo na TV", 13f, Neon.white, true).apply { setPadding(0, d(12), 0, d(6)) },
+                LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            Party.STYLES.forEachIndexed { i, (key, name, _) ->
+                chips.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+                    setPadding(d(4), d(4), d(4), d(6))
+                    background = if (Party.style == key) Neon.cardBg(this@MainActivity, Color.WHITE, 14, Neon.purple, 2)
+                        else Neon.cardBg(this@MainActivity, Color.WHITE, 14, Neon.stroke, 1)
+                    addView(View(this@MainActivity).apply { background = Party.swatch(key, d(10).toFloat()) },
+                        LinearLayout.LayoutParams(MATCH_PARENT, d(40)))
+                    addView(t(name, 11f, Neon.white, Party.style == key).apply { gravity = Gravity.CENTER; maxLines = 1; setPadding(0, d(4), 0, 0) },
+                        LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+                    setOnClickListener { Party.setStyle(key); partyKey = ""; styleRowsRefresh?.invoke(); renderParty() }
+                }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { if (i > 0) marginStart = d(6) })
+            }
+            partyBox.addView(chips, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             row.addView(smallButton("Copiar link") {
                 (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("festa", url))
