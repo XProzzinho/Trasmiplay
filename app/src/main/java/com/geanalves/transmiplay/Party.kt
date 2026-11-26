@@ -122,6 +122,35 @@ object Party {
         Hub.notifyUi()
     }
 
+    private const val GUESS_MS = 210_000L // duração chutada quando ainda não se sabe (3:30)
+    @Volatile private var sentOn = false
+
+    /** manda pras TVs da festa a fila com quem pediu e quando cada uma toca */
+    fun pushToTvs() {
+        if (!on) {
+            if (sentOn) { sentOn = false; Hub.sendToAll(JSONObject().put("t", "party").put("on", false)) }
+            return
+        }
+        sentOn = true
+        val g = group
+        val s = Hub.sessionFor(g)
+        val cur = s.current
+        var t = if (cur != null) {
+            val d = cur.durMs.takeIf { it > 0 } ?: GUESS_MS
+            (d - s.position()).coerceAtLeast(0)
+        } else 0L
+        val items = JSONArray()
+        s.queue.take(8).forEach {
+            items.put(JSONObject().put("title", it.title).put("by", it.by ?: "").put("in", t))
+            t += it.durMs.takeIf { d -> d > 0 } ?: GUESS_MS
+        }
+        var total = t
+        s.queue.drop(8).forEach { total += it.durMs.takeIf { d -> d > 0 } ?: GUESS_MS }
+        Hub.sendToGroup(g, JSONObject().put("t", "party").put("on", true).put("url", url() ?: "")
+            .put("now", cur?.let { JSONObject().put("title", it.title).put("by", it.by ?: "") })
+            .put("items", items).put("count", s.queue.size).put("left", total))
+    }
+
     private fun readBody(inp: InputStream, len: Long): String {
         val b = ByteArray(len.toInt())
         var got = 0

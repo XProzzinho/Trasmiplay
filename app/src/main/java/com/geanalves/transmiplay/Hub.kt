@@ -236,6 +236,7 @@ object Hub {
     private var tickCount = 0
     private fun tick() {
         tickCount++
+        if (tickCount % 4 == 0) try { Party.pushToTvs() } catch (_: Exception) {}
         for (s in allSessions()) inSession(s) {
             val cur = current
             if (cur != null && playing && cur.durMs > 0 && position() >= cur.durMs && now() > baseAt) {
@@ -432,6 +433,8 @@ object Hub {
     private fun prefs() = app.getSharedPreferences("transmiplay", Context.MODE_PRIVATE)
 
     private fun sendAll(j: JSONObject) = tvs.forEach { if (it.enabled && it.group == active.group) it.send(j) }
+    fun sendToGroup(g: String, j: JSONObject) = tvs.forEach { if (it.enabled && it.group == g) it.send(j) }
+    fun sendToAll(j: JSONObject) = tvs.forEach { it.send(j) }
     private fun sendLive(j: JSONObject) = tvs.forEach { if (it.enabled && it.group == liveGroup) it.send(j) }
 
     private fun loadMsg(it: Item): JSONObject {
@@ -650,17 +653,21 @@ object Hub {
         sendAll(stateMsg())
         notifyUi()
         // dá um tempinho pras TVs carregarem e começa todo mundo junto
-        worker.postDelayed({ inSession(ses) { if (sessionId == sid) doPlay() } }, 1200)
+        // YouTube: dá mais tempo pras TVs carregarem o vídeo antes (evita travar no começo)
+        worker.postDelayed({ inSession(ses) { if (sessionId == sid) doPlay() } }, if (item.kind == "youtube") 3500 else 1200)
     }
 
     fun togglePlay() = runOnWorker { if (playing) doPause() else doPlay() }
+
+    /** quanto antes as TVs ficam sabendo do "começa agora" (YouTube precisa de mais folga) */
+    private fun lead() = if (current?.kind == "youtube") 1500L else Proto.START_LEAD_MS
 
     private fun doPlay() {
         val cur = current ?: return
         var p = position()
         if (cur.durMs > 0 && p >= cur.durMs - 500) p = 0
         basePos = p
-        baseAt = now() + Proto.START_LEAD_MS
+        baseAt = now() + lead()
         playing = true
         endedHandled = false
         sendAll(stateMsg())
@@ -681,7 +688,7 @@ object Hub {
     private fun seekNow(ms: Long) {
         if (current == null) return
         basePos = ms.coerceAtLeast(0)
-        baseAt = if (playing) now() + Proto.START_LEAD_MS else now()
+        baseAt = if (playing) now() + lead() else now()
         endedHandled = false
         sendAll(stateMsg())
         notifyUi()
