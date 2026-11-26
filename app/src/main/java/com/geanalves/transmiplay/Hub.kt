@@ -160,11 +160,26 @@ object Hub {
     val quality: Int get() = prefs().getInt("quality", 0)
     val autoSync: Boolean get() = prefs().getBoolean("auto_sync", true)
 
-    fun setQuality(q: Int) { prefs().edit().putInt("quality", q).apply(); sendAll(cfgMsg()) }
-    fun setAutoSync(on: Boolean) { prefs().edit().putBoolean("auto_sync", on).apply(); sendAll(cfgMsg()) }
+    fun setQuality(q: Int) { prefs().edit().putInt("quality", q).apply(); sendCfgAll() }
+    fun setAutoSync(on: Boolean) { prefs().edit().putBoolean("auto_sync", on).apply(); sendCfgAll() }
     val bootStart: Boolean get() = prefs().getBoolean("boot_start", true)
-    fun setBootStart(on: Boolean) { prefs().edit().putBoolean("boot_start", on).apply(); sendAll(cfgMsg()) }
-    private fun cfgMsg() = JSONObject().put("t", "cfg").put("quality", quality).put("sync", autoSync).put("boot", bootStart)
+    fun setBootStart(on: Boolean) { prefs().edit().putBoolean("boot_start", on).apply(); sendCfgAll() }
+    private fun cfgMsg(g: String) = JSONObject().put("t", "cfg").put("quality", quality).put("sync", syncOn(g)).put("boot", bootStart)
+    private fun sendCfgAll() { syncSent.clear(); tvs.forEach { it.send(cfgMsg(it.group)) } }
+
+    /** quantos aparelhos tocam juntos nesse grupo (TVs, Chromecast/Smart TV e este celular) */
+    fun playersIn(g: String): Int = tvs.count { it.enabled && it.group == g } +
+        Cast.devices.count { it.enabled && it.group == g } + (if (PhoneSpeaker.enabled && g == active.group) 1 else 0)
+
+    /** com um aparelho só não tem com quem sincronizar: a correção fica desligada (toca liso) */
+    fun syncOn(g: String = active.group) = autoSync && playersIn(g) >= 2
+    private val syncSent = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    private fun checkSync() {
+        for (g in groups) {
+            val on = syncOn(g)
+            if (syncSent[g] != on) { syncSent[g] = on; tvs.forEach { if (it.group == g) it.send(cfgMsg(g)) } }
+        }
+    }
 
     fun skip(deltaMs: Long) = runOnWorker { seekNow((position() + deltaMs).coerceAtLeast(0)) }
     val activeTvs: Int get() = tvs.count { it.enabled && it.group == active.group } +
@@ -237,6 +252,7 @@ object Hub {
     private fun tick() {
         tickCount++
         if (tickCount % 4 == 0) try { Party.pushToTvs() } catch (_: Exception) {}
+        if (tickCount % 4 == 2) try { checkSync() } catch (_: Exception) {}
         for (s in allSessions()) inSession(s) {
             val cur = current
             if (cur != null && playing && cur.durMs > 0 && position() >= cur.durMs && now() > baseAt) {
@@ -379,8 +395,8 @@ object Hub {
                             muted = prefs().getBoolean("mute_$name", false)
                             send(JSONObject().put("t", "adj").put("ms", adj))
                             send(volMsg())
-                            send(cfgMsg())
                             group = prefs().getString("group_$name", null)?.takeIf { it in groups } ?: groups[0]
+                            send(cfgMsg(group))
                             val me = this
                             if (enabled) runOnWorker { inSession(sessionFor(group)) { me.sendCurrent() } }
                             notifyUi()

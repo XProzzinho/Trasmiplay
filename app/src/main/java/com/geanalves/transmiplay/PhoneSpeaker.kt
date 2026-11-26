@@ -146,7 +146,7 @@ object PhoneSpeaker : Hub.Syncable {
         if (!p.playWhenReady) p.playWhenReady = true
         if (p.playbackState != Player.STATE_READY) return
         val target = Hub.basePos + (clock - Hub.baseAt)
-        if (!Hub.autoSync) { speed(p, 1f); return }
+        if (!Hub.syncOn()) { speed(p, 1f); return }
         val raw = p.currentPosition - target
         if (abs(raw) > 1500) {
             if (now > seekCooldown) { speed(p, 1f); correcting = false; diffInit = false; p.seekTo(target + 150); seekCooldown = now + 8000 }

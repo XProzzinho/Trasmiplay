@@ -89,7 +89,7 @@ object Party {
                 else Hub.Item("media", url, Uri.parse(url).lastPathSegment?.take(60) ?: url, by = by,
                     mime = if (url.substringBefore('?').endsWith(".m3u8")) "m3u8" else null)
                 Hub.enqueueIn(group, item)
-                added++
+                justAdded(item)
                 json(out, JSONObject().put("ok", true).put("title", item.title))
             }
             "/festa/enviar" -> {
@@ -113,8 +113,9 @@ object Party {
                     if (left > 0) { f.delete(); json(out, JSONObject().put("erro", "O envio parou no meio"), "400 Bad Request"); return }
                 }
                 val title = orig.substringBeforeLast('.').replace('_', ' ').take(60)
-                Hub.enqueueIn(group, Hub.Item("media", "file://" + f.absolutePath, title, by = by))
-                added++
+                val item = Hub.Item("media", "file://" + f.absolutePath, title, by = by)
+                Hub.enqueueIn(group, item)
+                justAdded(item)
                 json(out, JSONObject().put("ok", true).put("title", title))
             }
             else -> json(out, JSONObject().put("erro", "não achei"), "404 Not Found")
@@ -124,6 +125,15 @@ object Party {
 
     private const val GUESS_MS = 210_000L // duração chutada quando ainda não se sabe (3:30)
     @Volatile private var sentOn = false
+    /** último pedido (as TVs mostram a lista na hora, com ele destacado) */
+    @Volatile private var lastItem: Hub.Item? = null
+    @Volatile private var seq = 0
+
+    private fun justAdded(item: Hub.Item) {
+        added++; seq++; lastItem = item
+        // mostra logo nas TVs (sem esperar os 2 s)
+        Thread { Thread.sleep(300); try { pushToTvs() } catch (_: Exception) {} }.start()
+    }
 
     /** manda pras TVs da festa a fila com quem pediu e quando cada uma toca */
     fun pushToTvs() {
@@ -140,13 +150,21 @@ object Party {
             (d - s.position()).coerceAtLeast(0)
         } else 0L
         val items = JSONArray()
-        s.queue.take(8).forEach {
-            items.put(JSONObject().put("title", it.title).put("by", it.by ?: "").put("in", t))
+        val last = lastItem
+        var newIdx = -1
+        var newIn = 0L
+        s.queue.forEachIndexed { i, it ->
+            if (it === last) { newIdx = i; newIn = t }
+            if (i < 8) items.put(JSONObject().put("title", it.title).put("by", it.by ?: "").put("in", t))
             t += it.durMs.takeIf { d -> d > 0 } ?: GUESS_MS
         }
-        var total = t
-        s.queue.drop(8).forEach { total += it.durMs.takeIf { d -> d > 0 } ?: GUESS_MS }
-        Hub.sendToGroup(g, JSONObject().put("t", "party").put("on", true).put("url", url() ?: "")
+        val playingNew = last != null && cur === last
+        val total = t
+        val news = last?.let {
+            JSONObject().put("seq", seq).put("title", it.title).put("by", it.by ?: "")
+                .put("idx", newIdx).put("in", newIn).put("now", playingNew)
+        }
+        Hub.sendToGroup(g, JSONObject().put("t", "party").put("on", true).put("url", url() ?: "").put("new", news)
             .put("now", cur?.let { JSONObject().put("title", it.title).put("by", it.by ?: "") })
             .put("items", items).put("count", s.queue.size).put("left", total))
     }

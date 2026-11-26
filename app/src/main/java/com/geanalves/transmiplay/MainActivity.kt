@@ -677,7 +677,7 @@ class MainActivity : Activity() {
 
         c.addView(section("Transmissão"))
         val prefs = getSharedPreferences("transmiplay", MODE_PRIVATE)
-        c.addView(toggleRow("Sincronização Automática", "Mantém todos os dispositivos no mesmo ponto", Hub.autoSync) { Hub.setAutoSync(it) })
+        c.addView(toggleRow("Sincronização Automática", "Mantém todos no mesmo ponto. Com uma TV só fica desligada sozinha (toca liso)", Hub.autoSync) { Hub.setAutoSync(it) })
         c.addView(toggleRow("Abrir o Simulplay quando a TV ligar", "A TV já fica pronta pra receber (algumas TVs não deixam)",
             Hub.bootStart) { Hub.setBootStart(it) })
         c.addView(toggleRow("Bloquear propagandas", "No navegador, bloqueia anúncios conhecidos",
@@ -866,7 +866,11 @@ class MainActivity : Activity() {
                 thumb.setImageResource(R.drawable.logo)
                 if (wanted != null) loadThumb(wanted)
             }
-            syncCard.text = if (Hub.autoSync) "●  Sincronizado em todas as TVs" else "●  Sincronização automática desligada"
+            syncCard.text = when {
+                !Hub.autoSync -> "●  Sincronização automática desligada"
+                Hub.playersIn(Hub.active.group) < 2 -> "●  Uma TV só: tocando livre, sem correção"
+                else -> "●  Sincronizado em todas as TVs"
+            }
         }
         val hasList = cur != null && ((Hub.currentIndex >= 0 && Hub.tracks.size > 1) || Hub.queue.isNotEmpty())
         prevBtn.visibility = if (hasList) View.VISIBLE else View.GONE
